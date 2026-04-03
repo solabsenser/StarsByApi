@@ -7,6 +7,7 @@ import psycopg2
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
+from analytics import generate_stats
 
 load_dotenv()
 
@@ -23,6 +24,10 @@ dp = Dispatcher()
 
 API_URL = "https://smm.myxvest2.ru/api/v2"
 
+# --- FORMAT ---
+def format_price(n):
+    return f"{n:,}".replace(",", " ")
+    
 # --- DB ---
 conn = psycopg2.connect(DATABASE_URL, sslmode="require")
 
@@ -131,16 +136,31 @@ def admin_kb(deposit_id):
         ]
     ])
 
+stats_kb = InlineKeyboardMarkup(inline_keyboard=[
+    [
+        InlineKeyboardButton(text="24ч", callback_data="stats_1"),
+        InlineKeyboardButton(text="7 дней", callback_data="stats_7"),
+        InlineKeyboardButton(text="30 дней", callback_data="stats_30"),
+    ]
+])
+
 # --- HANDLERS ---
 @dp.message(F.text == "/start")
 async def start(msg: types.Message):
     get_user_balance(msg.from_user.id)
     await msg.answer("⭐ Добро пожаловать!", reply_markup=main_kb)
 
+@dp.message(F.text == "/stats")
+async def stats_cmd(msg: types.Message):
+    if msg.from_user.id not in ADMIN_IDS:
+        return
+
+    await msg.answer("📊 Выберите период:", reply_markup=stats_kb)
+    
 @dp.message(F.text == "💰 Баланс")
 async def balance(msg: types.Message):
     user_balance = get_user_balance(msg.from_user.id)
-    await msg.answer(f"💰 Ваш баланс: {user_balance} UZS")
+    await msg.answer(f"💰 Ваш баланс: {format_price(user_balance)} UZS")
 
 @dp.message(F.text == "⭐ Купить Stars")
 async def buy(msg: types.Message):
@@ -171,17 +191,36 @@ async def history(msg: types.Message):
 
     await msg.answer(text)
     
+# --- CALLBACK ---
+@dp.callback_query()
+async def callbacks(call: types.CallbackQuery):
+    uid = call.from_user.id
+    
+    # --- STATS ---
+    if call.data.startswith("stats_"):
+        if call.from_user.id not in ADMIN_IDS:
+            return
+
+        days = int(call.data.split("_")[1])
+
+        # ⏳ анимация загрузки
+        await call.message.edit_text("⏳ Загружаем статистику...")
+
+        text = await generate_stats(get_cursor, bot, days)
+
+        # обновляем это же сообщение
+        await call.message.edit_text(
+            text,
+            reply_markup=stats_kb
+        )
+        return
+    
     # --- ПРОВЕРКА АДМИНА ---
     if call.data.startswith(("approve_", "cancel_")):
         if call.from_user.id not in ADMIN_IDS:
             await call.answer("❌ У вас нет доступа", show_alert=True)
             return
         
-# --- CALLBACK ---
-@dp.callback_query()
-async def callbacks(call: types.CallbackQuery):
-    uid = call.from_user.id
-
     if call.data == "back_main":
         user_state.pop(uid, None)
         await call.message.answer("Главное меню", reply_markup=main_kb)
