@@ -8,6 +8,7 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
 from analytics import generate_stats
+from aiogram.enums import ParseMode
 
 load_dotenv()
 
@@ -115,14 +116,33 @@ main_kb = ReplyKeyboardMarkup(
 )
 
 def stars_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⭐ 50", callback_data="buy_50"),
-         InlineKeyboardButton(text="⭐ 100", callback_data="buy_100")],
-        [InlineKeyboardButton(text="⭐ 200", callback_data="buy_200"),
-         InlineKeyboardButton(text="⭐ 500", callback_data="buy_500")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_main")]
-    ])
-
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="⭐ 50", callback_data="buy_50"),
+                InlineKeyboardButton(text="⭐ 75", callback_data="buy_75"),
+                InlineKeyboardButton(text="⭐ 100", callback_data="buy_100"),
+            ],
+            [
+                InlineKeyboardButton(text="⭐ 150", callback_data="buy_150"),
+                InlineKeyboardButton(text="⭐ 200", callback_data="buy_200"),
+                InlineKeyboardButton(text="⭐ 250", callback_data="buy_250"),
+            ],
+            [
+                InlineKeyboardButton(text="⭐ 300", callback_data="buy_300"),
+                InlineKeyboardButton(text="⭐ 500", callback_data="buy_500"),
+                InlineKeyboardButton(text="⭐ 1000", callback_data="buy_1000"),
+            ],
+            [
+                InlineKeyboardButton(text="⭐ 2000", callback_data="buy_2000"),
+                InlineKeyboardButton(text="⭐ 3000", callback_data="buy_3000"),
+            ],
+            [
+                InlineKeyboardButton(text="🔙 Назад", callback_data="back_main"),
+            ],
+        ]
+    )
+    
 def back_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_stars")]
@@ -165,11 +185,15 @@ async def balance(msg: types.Message):
 @dp.message(F.text == "⭐ Купить Stars")
 async def buy(msg: types.Message):
     await msg.answer(
-        f"💰 Цена: {PRICE_PER_STAR} UZS / ⭐\nВыберите количество:",
+        f"✅ Выберите покупку звёзд\n\n"
+        f"⭐️ Сколько звёзд вы хотите купить?\n\n"
+        f"🔹 Минимум: 50 звёзд\n"
+        f"💰 Цена: {PRICE_PER_STAR} UZS/звезда\n\n"
+        f"👇 Используйте кнопки ниже:",
         reply_markup=stars_kb()
     )
     user_state[msg.from_user.id] = {"step": "amount"}
-
+    
 @dp.message(F.text == "💳 Пополнить")
 async def deposit(msg: types.Message):
     await msg.answer("💳 Пополнение\nВведите сумму (мин 1000 UZS):")
@@ -178,18 +202,28 @@ async def deposit(msg: types.Message):
 @dp.message(F.text == "📜 История")
 async def history(msg: types.Message):
     cur = get_cursor()
-    cur.execute("SELECT username, amount, price, date FROM orders WHERE user_id=%s ORDER BY id DESC LIMIT 5", (msg.from_user.id,))
+    cur.execute(
+        "SELECT username, amount, price, date FROM orders WHERE user_id=%s ORDER BY id DESC LIMIT 5",
+        (msg.from_user.id,)
+    )
     rows = cur.fetchall()
 
     if not rows:
         await msg.answer("📭 История пуста")
         return
 
-    text = "📜 История заказов:\n\n"
-    for r in rows:
-        text += f"👤 {r[0]} | ⭐ {r[1]} | 💰 {r[2]} UZS\n🕒 {r[3]}\n\n"
+    text = "📜 <b>История заказов</b>\n\n"
 
-    await msg.answer(text)
+    for i, r in enumerate(rows, 1):
+        text += (
+            f"<b>#{i}</b>\n"
+            f"👤 @{r[0]}\n"
+            f"⭐ {r[1]} Stars\n"
+            f"💰 {format_price(r[2])} UZS\n"
+            f"🕒 {r[3]}\n\n"
+        )
+
+    await msg.answer(text, parse_mode="HTML")
     
 # --- CALLBACK ---
 @dp.callback_query()
@@ -223,14 +257,24 @@ async def callbacks(call: types.CallbackQuery):
         
     if call.data == "back_main":
         user_state.pop(uid, None)
-        await call.message.answer("Главное меню", reply_markup=main_kb)
+
+        await call.message.delete()
+        await call.message.answer(
+            "🏠 Главное меню",
+            reply_markup=main_kb
+        )
         return
 
     if call.data == "back_stars":
         await call.message.edit_text(
-            f"💰 Цена: {PRICE_PER_STAR} UZS / ⭐\nВыберите количество:",
+            f"✅ Выберите покупку звёзд\n\n"
+            f"⭐️ Сколько звёзд вы хотите купить?\n\n"
+            f"🔹 Минимум: 50 звёзд\n"
+            f"💰 Цена: {PRICE_PER_STAR} UZS/звезда\n\n"
+            f"👇 Используйте кнопки ниже:",
             reply_markup=stars_kb()
         )
+        
         user_state[uid] = {"step": "amount"}
         return
 
@@ -243,9 +287,9 @@ async def callbacks(call: types.CallbackQuery):
         }
 
         await call.message.edit_text(
-            f"⭐ {amount} Stars\n"
-            f"💰 {amount * PRICE_PER_STAR} UZS\n\n"
-            f"Введите username:",
+            f"⭐ Вы выбрали: {amount} Stars\n"
+            f"💰 Стоимость: {format_price(amount * PRICE_PER_STAR)} UZS\n"
+            f"👤 Введите username получателя:",
             reply_markup=back_kb()
         )
         
@@ -367,12 +411,12 @@ async def process_order(uid, username, amount, msg):
         await asyncio.sleep(4)
 
         text = (
-            "🌟 <b>Заказ успешно выполнен!</b>\n\n"
-            f"<b>🆔 Заказ:</b> <code>#{order_id}</code>\n"
-            f"<b>👤 Получатель:</b> @{username}\n"
-            f"<b>⭐ Количество:</b> {amount} Stars\n"
-            f"<b>💰 Оплата:</b> {total_price} UZS\n\n"
-            "✅ <b>Звезды успешно отправлены!</b>\n"
+            "🌟 Заказ успешно выполнен!\n\n"
+            f"🆔 Заказ: #{order_id}\n"
+            f"👤 Получатель: @{username}\n"
+            f"⭐ Количество: {amount} Stars\n"
+            f"💰 Оплата: {total_price} UZS\n\n"
+            "✅ Звезды успешно отправлены!\n"
             "💎 Спасибо за покупку!"
         )
         await processing_msg.edit_text(text)
@@ -383,7 +427,11 @@ async def process_order(uid, username, amount, msg):
 
         await bot.send_message(
             ADMIN_GROUP_ID,
-            f"🧾 #{order_id} | {user_display} | ⭐ {amount} | 💰 {total_price} UZS"
+            f"⭐ Приобретение звёзд!\n\n"
+            f"🧾 Заказ: #{order_id}\n"
+            f"👤 Пользователь: {user_display}\n"
+            f"⭐ Кол-во: {amount}\n"
+            f"💰 Сумма: {total_price} UZS"
         )
     else:
         update_balance(uid, total_price)
@@ -442,13 +490,19 @@ async def process(msg: types.Message):
             conn.commit()
 
             await msg.answer(
-                f"✅ To'lov qabul qilindi!\n\n"
-                f"🆔 ID: {deposit_id}\n"
-                f"💰 {amount} so'm\n"
-                f"💳 {CARD_NUMBER}\n\n"
-                f"📸 Чек отправьте сюда"
-            )
+                f"✅ Сумма платежа принята!\n\n"
+                f"🆔 ID платежа: {deposit_id}\n"
+                f"💵 Сумма: {format_price(amount)} сумов\n"
+                f"💳 Для оплаты: <code>{CARD_NUMBER}</code>\n\n"
 
+                f"📸 <b>После оплаты отправьте сюда чек (скриншот)</b>\n\n"
+
+                f"<blockquote>♻️ После совершения платежа средства будут рассмотрены админами и зачислены на ваш счет.</blockquote>\n\u200b\n"
+                f"<blockquote>⏰ Если платеж не поступит в течение 10 минут, он будет отменен.</blockquote>",
+
+                parse_mode="HTML"
+            )
+            
             user_state[uid] = {"step": "await_screenshot", "deposit_id": deposit_id}
 
             asyncio.create_task(expire_payment(deposit_id, uid))
