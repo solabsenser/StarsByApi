@@ -19,6 +19,8 @@ ADMIN_GROUP_ID = int(os.getenv("ADMIN_GROUP_ID"))
 CARD_NUMBER = os.getenv("CARD_NUMBER")
 PRICE_PER_STAR = int(os.getenv("PRICE_PER_STAR"))
 DATABASE_URL = os.getenv("DATABASE_URL")
+SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL")
+SUPABASE_DATABASE_URL = os.getenv("SUPABASE_DATABASE_URL")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -116,14 +118,34 @@ def format_price(n):
     return f"{n:,}".replace(",", " ")
     
 # --- DB ---
-conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+def get_db_url():
+    """
+    Priority:
+    1) SUPABASE_DB_URL
+    2) SUPABASE_DATABASE_URL
+    3) DATABASE_URL (legacy fallback)
+    """
+    return SUPABASE_DB_URL or SUPABASE_DATABASE_URL or DATABASE_URL
+
+
+def create_connection():
+    db_url = get_db_url()
+    if not db_url:
+        raise ValueError(
+            "Database URL is not configured. "
+            "Set SUPABASE_DB_URL (recommended) or SUPABASE_DATABASE_URL / DATABASE_URL."
+        )
+    return psycopg2.connect(db_url, sslmode="require")
+
+
+conn = create_connection()
 
 def get_cursor():
     global conn
     try:
         conn.cursor().execute("SELECT 1")
-    except:
-        conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+    except Exception:
+        conn = create_connection()
     return conn.cursor()
 
 # создаём cursor перед использованием
