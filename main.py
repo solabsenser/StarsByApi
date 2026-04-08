@@ -26,7 +26,6 @@ dp = Dispatcher()
 API_URL = "https://smm.myxvest2.ru/api/v2"
 
 user_lang_cache = {}
-user_balance_cache = {}
 
 # ---- LANGUAGE CHANGER ----
 TEXTS = {
@@ -167,28 +166,20 @@ conn.commit()
 
 # --- FUNCTIONS ---
 def get_user_balance(user_id):
-    if user_id in user_balance_cache:
-        return user_balance_cache[user_id]
-
     cur = get_cursor()
     cur.execute("SELECT balance FROM users WHERE user_id=%s", (user_id,))
     row = cur.fetchone()
-
     if row:
-        user_balance_cache[user_id] = row[0]
         return row[0]
     else:
         cur.execute("INSERT INTO users (user_id, balance) VALUES (%s, 0)", (user_id,))
         conn.commit()
-        user_balance_cache[user_id] = 0
         return 0
 
 def update_balance(user_id, amount):
     cur = get_cursor()
     cur.execute("UPDATE users SET balance = balance + %s WHERE user_id=%s", (amount, user_id))
     conn.commit()
-
-    user_balance_cache[user_id] = user_balance_cache.get(user_id, 0) + amount
 
 def buy_stars(username, amount):
     return requests.get(API_URL, params={
@@ -209,7 +200,7 @@ def set_user_lang(user_id, lang):
 
     conn.commit()
 
-    user_lang_cache[user_id] = lang  # 🔥 ВАЖНО
+    user_lang_cache[user_id] = lang  # ← ВАЖНО
     
 def get_user_lang(user_id):
     if user_id in user_lang_cache:
@@ -236,7 +227,7 @@ user_state = {}
 
 # --- KEYBOARDS ---
 def main_kb(uid):
-    lang = get_user_lang(uid)
+    lang = user_lang_cache.get(uid) or get_user_lang(uid)
 
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -246,15 +237,12 @@ def main_kb(uid):
                 KeyboardButton(text="💰 Balans" if lang == "uz" else "💰 Баланс")
             ],
             [
-                KeyboardButton(text="📜 Tarix" if lang == "uz" else "📜 История")
-            ],
-            [
                 KeyboardButton(text="🌐 Tilni tanlash" if lang == "uz" else "🌐 Выбрать язык")
             ]
         ],
         resize_keyboard=True
     )
-
+    
 def stars_kb():
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -318,9 +306,7 @@ async def start(msg: types.Message):
     uid = msg.from_user.id
 
     get_user_balance(uid)
-
-    # прогреваем кеш языка
-    get_user_lang(uid)
+    get_user_lang(uid)  # ← ДОБАВЬ ЭТО
 
     await msg.answer(t(uid, "welcome"), reply_markup=main_kb(uid))
     
@@ -352,32 +338,6 @@ async def buy(msg: types.Message):
 async def deposit(msg: types.Message):
     await msg.answer(t(msg.from_user.id, "deposit"))
     user_state[msg.from_user.id] = {"step": "deposit_amount"}
-
-@dp.message(F.text.in_(["📜 История", "📜 Tarix"]))
-async def history(msg: types.Message):
-    cur = get_cursor()
-    cur.execute(
-        "SELECT username, amount, price, date FROM orders WHERE user_id=%s ORDER BY id DESC LIMIT 5",
-        (msg.from_user.id,)
-    )
-    rows = cur.fetchall()
-
-    if not rows:
-        await msg.answer(t(msg.from_user.id, "history_empty"))
-        return
-
-    text = f"📜 <b>{t(msg.from_user.id, 'history')}</b>\n\n"
-
-    for i, r in enumerate(rows, 1):
-        text += (
-            f"<b>#{i}</b>\n"
-            f"👤 @{r[0]}\n"
-            f"⭐ {r[1]} Stars\n"
-            f"💰 {format_price(r[2])} UZS\n"
-            f"🕒 {r[3]}\n\n"
-        )
-
-    await msg.answer(text, parse_mode="HTML")
 
 @dp.message(F.text.in_(["🌐 Выбрать язык", "🌐 Tilni tanlash"]))
 async def choose_lang(msg: types.Message):
