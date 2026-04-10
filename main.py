@@ -1,6 +1,7 @@
 import asyncio
 import requests
 import os
+import time
 from datetime import datetime
 
 import psycopg2
@@ -26,6 +27,9 @@ dp = Dispatcher()
 API_URL = "https://smm.myxvest2.ru/api/v2"
 
 user_lang_cache = {}
+pending_deposits = {}
+
+OCR_API_KEY = os.getenv("OCR_API_KEY", "ТВОЙ_API_KEY")
 
 # ---- LANGUAGE CHANGER ----
 TEXTS = {
@@ -235,6 +239,31 @@ def get_user_lang(user_id):
 def t(user_id, key):
     lang = user_lang_cache.get(user_id, "ru")
     return TEXTS[key][lang]
+
+
+def check_receipt(file_url):
+    try:
+        res = requests.post(
+            "https://api.ocr.space/parse/image",
+            data={
+                "apikey": OCR_API_KEY,
+                "url": file_url,
+                "language": "eng"
+            },
+            timeout=20
+        ).json()
+
+        text = res["ParsedResults"][0]["ParsedText"]
+
+        if not text or len(text) < 10:
+            return False
+
+        if not any(c.isdigit() for c in text):
+            return False
+
+        return True
+    except Exception:
+        return False
     
 # --- STATE ---
 user_state = {}
@@ -600,23 +629,19 @@ async def process_order(uid, username, amount, msg):
             f"{t(uid, 'send_admin')}: @your_admin_username"
         )
         
-# --- EXPIRE ---
-async def expire_payment(deposit_id, user_id):
-    await asyncio.sleep(600)
+async def clean_expired():
+    while True:
+        now = time.time()
 
-    cur = safe_execute("SELECT status FROM deposits WHERE id=%s", (deposit_id,))
-    row = cur.fetchone()
+        expired = [
+            k for k, v in pending_deposits.items()
+            if v["expire"] < now
+        ]
 
-    # ❗ ВАЖНО: проверяем что ещё не отменён и не подтверждён
-    if row and row[0] == "waiting":
-        safe_execute("UPDATE deposits SET status='expired' WHERE id=%s", (deposit_id,))
-        conn.commit()
+        for k in expired:
+            pending_deposits.pop(k, None)
 
-        lang = user_lang_cache.get(user_id, "ru")
-        await bot.send_message(
-            user_id,
-            f"❌ {'To‘lov bekor qilindi (vaqt tugadi)' if lang=='uz' else 'Платёж отменён (время вышло)'} #{deposit_id}"
-        )
+        await asyncio.sleep(30)
         
 # --- PROCESS ---
 @dp.message()
@@ -644,34 +669,22 @@ async def process(msg: types.Message):
                 await msg.answer(t(uid, "min_deposit"))
                 return
 
-            expire_time = datetime.now().timestamp() + 600
+            deposit_id = int(time.time() * 1000)
 
-            cur = safe_execute(
-                "INSERT INTO deposits (user_id, amount, status, date, expire_at) VALUES (%s,%s,%s,%s,%s) RETURNING id",
-                (uid, amount, "waiting", datetime.now().strftime("%Y-%m-%d %H:%M"), str(expire_time))
-            )
-            deposit_id = cur.fetchone()[0]
-            conn.commit()
-
-            lang = user_lang_cache.get(uid, "ru")
+            pending_deposits[deposit_id] = {
+                "user_id": uid,
+                "amount": amount,
+                "expire": time.time() + 600
+            }
 
             await msg.answer(
-                f"{'✅ To‘lov qabul qilindi!' if lang=='uz' else '✅ Сумма платежа принята!'}\n\n"
                 f"🆔 ID: {deposit_id}\n"
-                f"💵 {'Summa' if lang=='uz' else 'Сумма'}: {format_price(amount)}\n"
-                f"💳 {'To‘lov uchun' if lang=='uz' else 'Для оплаты'}: <code>{CARD_NUMBER}</code>\n\n"
-
-                f"📸 <b>{'To‘lovdan so‘ng chek yuboring' if lang=='uz' else 'После оплаты отправьте сюда чек (скриншот)'}</b>\n\n"
-
-                f"<blockquote>{'♻️ To‘lov tekshiriladi va balansga qo‘shiladi' if lang=='uz' else '♻️ После совершения платежа средства будут рассмотрены админами и зачислены на ваш счет.'}</blockquote>\n\u200b\n"
-                f"<blockquote>{'⏰ 10 daqiqa ichida to‘lov bo‘lmasa bekor qilinadi' if lang=='uz' else '⏰ Если платеж не поступит в течение 10 минут, он будет отменен.'}</blockquote>",
-
-                parse_mode="HTML"
+                f"💰 {format_price(amount)} UZS\n"
+                f"💳 {CARD_NUMBER}\n\n"
+                f"📸 Отправьте чек"
             )
-            
-            user_state[uid] = {"step": "await_screenshot", "deposit_id": deposit_id}
 
-            asyncio.create_task(expire_payment(deposit_id, uid))
+            user_state[uid] = {"step": "await_screenshot", "deposit_id": deposit_id}
 
         elif state["step"] == "await_screenshot":
             if not msg.photo:
@@ -679,35 +692,54 @@ async def process(msg: types.Message):
                 return
 
             deposit_id = state["deposit_id"]
-            file_id = msg.photo[-1].file_id
 
-            safe_execute("UPDATE deposits SET screenshot=%s, status='pending' WHERE id=%s", (file_id, deposit_id))
+            if deposit_id not in pending_deposits:
+                await msg.answer("❌ Платёж устарел")
+                user_state.pop(uid, None)
+                return
+
+            file = await bot.get_file(msg.photo[-1].file_id)
+            file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
+
+            if not check_receipt(file_url):
+                await msg.answer("❌ Похоже это не чек")
+                return
+
+            data = pending_deposits.pop(deposit_id)
+
+            cur = safe_execute(
+                "INSERT INTO deposits (user_id, amount, status, date, screenshot) VALUES (%s,%s,%s,%s,%s) RETURNING id",
+                (
+                    data["user_id"],
+                    data["amount"],
+                    "pending",
+                    datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    msg.photo[-1].file_id
+                )
+            )
+
+            real_id = cur.fetchone()[0]
             conn.commit()
 
-            await msg.answer(t(uid, "check_sent"))
-
-            cur = safe_execute("SELECT amount FROM deposits WHERE id=%s", (deposit_id,))
-            amount = cur.fetchone()[0]
-            
-            user_username = msg.from_user.username
-            user_display = f"@{user_username}" if user_username else f"id:{uid}"
+            await msg.answer("✅ Чек отправлен на проверку")
 
             await bot.send_photo(
                 ADMIN_GROUP_ID,
-                photo=file_id,
+                photo=msg.photo[-1].file_id,
                 caption=(
                     f"💳 Новый платёж\n"
-                    f"🆔 ID: {deposit_id}\n"
-                    f"👤 {user_display}\n"
-                    f"💰 {amount} UZS"
+                    f"🆔 ID: {real_id}\n"
+                    f"👤 @{msg.from_user.username or uid}\n"
+                    f"💰 {data['amount']} UZS"
                 ),
-                reply_markup=admin_kb(deposit_id)
+                reply_markup=admin_kb(real_id)
             )
 
             user_state.pop(uid, None)
             
 # --- RUN ---
 async def main():
+    asyncio.create_task(clean_expired())
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
