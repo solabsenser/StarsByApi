@@ -118,18 +118,25 @@ def format_price(n):
 # --- DB ---
 conn = psycopg2.connect(DATABASE_URL, sslmode="require")
 
-def get_cursor():
+def reconnect():
+    global conn
+    conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+
+# ---- SAFE EXECUTE ----
+def safe_execute(query, params=None):
     global conn
     try:
-        conn.cursor().execute("SELECT 1")
-    except:
-        conn = psycopg2.connect(DATABASE_URL, sslmode="require")
-    return conn.cursor()
+        cur = conn.cursor()
+        cur.execute(query, params)
+        return cur
+    except psycopg2.OperationalError:
+        reconnect()
+        cur = conn.cursor()
+        cur.execute(query, params)
+        return cur
 
-# создаём cursor перед использованием
-cur = get_cursor()
-
-cur.execute("""
+# ---- CREATE TABLES (SAFE) ----
+safe_execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id BIGINT PRIMARY KEY,
     balance INTEGER DEFAULT 0,
@@ -137,7 +144,7 @@ CREATE TABLE IF NOT EXISTS users (
 )
 """)
 
-cur.execute("""
+safe_execute("""
 CREATE TABLE IF NOT EXISTS orders (
     id SERIAL PRIMARY KEY,
     user_id BIGINT,
@@ -150,7 +157,7 @@ CREATE TABLE IF NOT EXISTS orders (
 )
 """)
 
-cur.execute("""
+safe_execute("""
 CREATE TABLE IF NOT EXISTS deposits (
     id SERIAL PRIMARY KEY,
     user_id BIGINT,
@@ -164,21 +171,36 @@ CREATE TABLE IF NOT EXISTS deposits (
 
 conn.commit()
 
+# ---- SAFE EXECUTE ----
+def safe_execute(query, params=None):
+    global conn
+    try:
+        cur = conn.cursor()
+        cur.execute(query, params)
+        return cur
+    except psycopg2.OperationalError:
+        conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+        cur = conn.cursor()
+        cur.execute(query, params)
+        return cur
+        
 # --- FUNCTIONS ---
 def get_user_balance(user_id):
-    cur = get_cursor()
-    cur.execute("SELECT balance FROM users WHERE user_id=%s", (user_id,))
+    cur = safe_execute("SELECT balance FROM users WHERE user_id=%s", (user_id,))
     row = cur.fetchone()
+
     if row:
         return row[0]
-    else:
-        cur.execute("INSERT INTO users (user_id, balance) VALUES (%s, 0)", (user_id,))
-        conn.commit()
-        return 0
+
+    safe_execute("INSERT INTO users (user_id, balance) VALUES (%s, 0)", (user_id,))
+    conn.commit()
+    return 0
 
 def update_balance(user_id, amount):
-    cur = get_cursor()
-    cur.execute("UPDATE users SET balance = balance + %s WHERE user_id=%s", (amount, user_id))
+    safe_execute(
+        "UPDATE users SET balance = balance + %s WHERE user_id=%s",
+        (amount, user_id)
+    )
     conn.commit()
 
 def buy_stars(username, amount):
@@ -190,24 +212,20 @@ def buy_stars(username, amount):
     }).json()
 
 def set_user_lang(user_id, lang):
-    cur = get_cursor()
-
-    cur.execute(
+    safe_execute(
         "INSERT INTO users (user_id, lang) VALUES (%s, %s) "
         "ON CONFLICT (user_id) DO UPDATE SET lang = EXCLUDED.lang",
         (user_id, lang)
     )
-
     conn.commit()
 
-    user_lang_cache[user_id] = lang  # ← ВАЖНО
+    user_lang_cache[user_id] = lang
     
 def get_user_lang(user_id):
     if user_id in user_lang_cache:
         return user_lang_cache[user_id]
 
-    cur = get_cursor()
-    cur.execute("SELECT lang FROM users WHERE user_id=%s", (user_id,))
+    cur = safe_execute("SELECT lang FROM users WHERE user_id=%s", (user_id,))
     row = cur.fetchone()
 
     lang = row[0] if row and row[0] else "ru"
@@ -215,11 +233,7 @@ def get_user_lang(user_id):
     return lang
     
 def t(user_id, key):
-    lang = user_lang_cache.get(user_id)
-
-    if not lang:
-        lang = get_user_lang(user_id)
-
+    lang = user_lang_cache.get(user_id, "ru")
     return TEXTS[key][lang]
     
 # --- STATE ---
@@ -227,7 +241,7 @@ user_state = {}
 
 # --- KEYBOARDS ---
 def main_kb(uid):
-    lang = user_lang_cache.get(uid) or get_user_lang(uid)
+    lang = user_lang_cache.get(uid, "ru")
 
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -305,10 +319,14 @@ def lang_kb():
 async def start(msg: types.Message):
     uid = msg.from_user.id
 
-    get_user_balance(uid)
-    get_user_lang(uid)  # ← ДОБАВЬ ЭТО
+    # если нет в кеше — ставим дефолт без БД
+    if uid not in user_lang_cache:
+        user_lang_cache[uid] = "ru"
 
-    await msg.answer(t(uid, "welcome"), reply_markup=main_kb(uid))
+    await msg.answer(
+        t(uid, "welcome"),
+        reply_markup=main_kb(uid)
+    )
     
 @dp.message(F.text == "/stats")
 async def stats_cmd(msg: types.Message):
@@ -324,15 +342,21 @@ async def balance(msg: types.Message):
 
 @dp.message(F.text.in_(["⭐ Купить Stars", "⭐ Stars sotib olish"]))
 async def buy(msg: types.Message):
+    uid = msg.from_user.id
+
+    # берём язык ТОЛЬКО из кеша (никакого SQL)
+    lang = user_lang_cache.get(uid, "ru")
+
     await msg.answer(
-        f"{'✅ Yulduz xaridini tanlang' if get_user_lang(msg.from_user.id)=='uz' else '✅ Выберите покупку звёзд'}\n\n"
-        f"{t(msg.from_user.id, 'choose_stars')}\n\n"
-        f"{t(msg.from_user.id, 'min')}\n"
-        f"{t(msg.from_user.id, 'price')}: {PRICE_PER_STAR} UZS/Star\n\n"
-        f"{t(msg.from_user.id, 'use_buttons')}",
+        f"{'✅ Yulduz xaridini tanlang' if lang=='uz' else '✅ Выберите покупку звёзд'}\n\n"
+        f"{t(uid, 'choose_stars')}\n\n"
+        f"{t(uid, 'min')}\n"
+        f"{t(uid, 'price')}: {PRICE_PER_STAR} UZS/Star\n\n"
+        f"{t(uid, 'use_buttons')}",
         reply_markup=stars_kb()
     )
-    user_state[msg.from_user.id] = {"step": "amount"}
+
+    user_state[uid] = {"step": "amount"}
     
 @dp.message(F.text.in_(["💳 Пополнить", "💳 To‘ldirish"]))
 async def deposit(msg: types.Message):
@@ -400,7 +424,7 @@ async def callbacks(call: types.CallbackQuery):
         return
 
     if call.data == "back_stars":
-        lang = get_user_lang(uid)
+        lang = user_lang_cache.get(uid, "ru")
 
         await call.message.edit_text(
             f"{'✅ Yulduz xaridini tanlang' if lang=='uz' else '✅ Выберите покупку звёзд'}\n\n"
@@ -422,7 +446,7 @@ async def callbacks(call: types.CallbackQuery):
             "amount": amount
         }
 
-        lang = get_user_lang(uid)
+        lang = user_lang_cache.get(uid, "ru")
 
         await call.message.edit_text(
             f"{'⭐ Siz tanladingiz:' if lang=='uz' else '⭐ Вы выбрали:'} {amount} Stars\n"
@@ -435,8 +459,7 @@ async def callbacks(call: types.CallbackQuery):
     if call.data.startswith("approve_"):
         deposit_id = int(call.data.split("_")[1])
 
-        cur = get_cursor()
-        cur.execute("SELECT user_id, amount FROM deposits WHERE id=%s", (deposit_id,))
+        cur = safe_execute("SELECT user_id, amount FROM deposits WHERE id=%s", (deposit_id,))
         row = cur.fetchone()
 
         if row:
@@ -444,8 +467,7 @@ async def callbacks(call: types.CallbackQuery):
 
             update_balance(user_id, amount)
 
-            cur = get_cursor()
-            cur.execute("UPDATE deposits SET status='success' WHERE id=%s", (deposit_id,))
+            safe_execute("UPDATE deposits SET status='success' WHERE id=%s", (deposit_id,))
             conn.commit()
 
             # получаем username
@@ -477,15 +499,13 @@ async def callbacks(call: types.CallbackQuery):
     if call.data.startswith("cancel_"):
         deposit_id = int(call.data.split("_")[1])
 
-        cur = get_cursor()
-        cur.execute("SELECT user_id, amount FROM deposits WHERE id=%s", (deposit_id,))
+        cur = safe_execute("SELECT user_id, amount FROM deposits WHERE id=%s", (deposit_id,))
         row = cur.fetchone()
 
         if row:
             user_id, amount = row
 
-            cur = get_cursor()
-            cur.execute("UPDATE deposits SET status='canceled' WHERE id=%s", (deposit_id,))
+            safe_execute("UPDATE deposits SET status='canceled' WHERE id=%s", (deposit_id,))
             conn.commit()
 
             # получаем username
@@ -539,8 +559,7 @@ async def process_order(uid, username, amount, msg):
     if res["success"]:
         order_id = generate_order_id()
 
-        cur = get_cursor()
-        cur.execute(
+        safe_execute(
             "INSERT INTO orders (user_id, username, amount, price, order_id, status, date) VALUES (%s,%s,%s,%s,%s,%s,%s)",
             (uid, username, amount, total_price, order_id, "success", datetime.now().strftime("%Y-%m-%d %H:%M"))
         )
@@ -548,7 +567,7 @@ async def process_order(uid, username, amount, msg):
 
         await asyncio.sleep(4)
 
-        lang = get_user_lang(uid)
+        lang = user_lang_cache.get(uid, "ru")
 
         text = (
             f"{'🌟 Buyurtma muvaffaqiyatli bajarildi!' if lang=='uz' else '🌟 Заказ успешно выполнен!'}\n\n"
@@ -585,17 +604,15 @@ async def process_order(uid, username, amount, msg):
 async def expire_payment(deposit_id, user_id):
     await asyncio.sleep(600)
 
-    cur = get_cursor()
-    cur.execute("SELECT status FROM deposits WHERE id=%s", (deposit_id,))
+    cur = safe_execute("SELECT status FROM deposits WHERE id=%s", (deposit_id,))
     row = cur.fetchone()
 
     # ❗ ВАЖНО: проверяем что ещё не отменён и не подтверждён
     if row and row[0] == "waiting":
-        cur = get_cursor()
-        cur.execute("UPDATE deposits SET status='expired' WHERE id=%s", (deposit_id,))
+        safe_execute("UPDATE deposits SET status='expired' WHERE id=%s", (deposit_id,))
         conn.commit()
 
-        lang = get_user_lang(user_id)
+        lang = user_lang_cache.get(user_id, "ru")
         await bot.send_message(
             user_id,
             f"❌ {'To‘lov bekor qilindi (vaqt tugadi)' if lang=='uz' else 'Платёж отменён (время вышло)'} #{deposit_id}"
@@ -617,7 +634,11 @@ async def process(msg: types.Message):
             user_state.pop(uid, None)
 
         elif state["step"] == "deposit_amount":
-            amount = int(msg.text)
+            try:
+                amount = int(msg.text)
+            except ValueError:
+                await msg.answer("❌ Введите число")
+                return
 
             if amount < 1000:
                 await msg.answer(t(uid, "min_deposit"))
@@ -625,15 +646,14 @@ async def process(msg: types.Message):
 
             expire_time = datetime.now().timestamp() + 600
 
-            cur = get_cursor()
-            cur.execute(
+            cur = safe_execute(
                 "INSERT INTO deposits (user_id, amount, status, date, expire_at) VALUES (%s,%s,%s,%s,%s) RETURNING id",
                 (uid, amount, "waiting", datetime.now().strftime("%Y-%m-%d %H:%M"), str(expire_time))
             )
             deposit_id = cur.fetchone()[0]
             conn.commit()
 
-            lang = get_user_lang(uid)
+            lang = user_lang_cache.get(uid, "ru")
 
             await msg.answer(
                 f"{'✅ To‘lov qabul qilindi!' if lang=='uz' else '✅ Сумма платежа принята!'}\n\n"
@@ -661,17 +681,12 @@ async def process(msg: types.Message):
             deposit_id = state["deposit_id"]
             file_id = msg.photo[-1].file_id
 
-            cur = get_cursor()
-            cur.execute(
-                "UPDATE deposits SET screenshot=%s, status='pending' WHERE id=%s",
-                (file_id, deposit_id)
-            )
+            safe_execute("UPDATE deposits SET screenshot=%s, status='pending' WHERE id=%s", (file_id, deposit_id))
             conn.commit()
 
             await msg.answer(t(uid, "check_sent"))
 
-            cur = get_cursor()
-            cur.execute("SELECT amount FROM deposits WHERE id=%s", (deposit_id,))
+            cur = safe_execute("SELECT amount FROM deposits WHERE id=%s", (deposit_id,))
             amount = cur.fetchone()[0]
             
             user_username = msg.from_user.username
