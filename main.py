@@ -28,6 +28,7 @@ API_URL = "https://smm.myxvest2.ru/api/v2"
 
 user_lang_cache = {}
 pending_deposits = {}
+last_ocr = {}
 
 OCR_API_KEY = os.getenv("OCR_API_KEY", "ТВОЙ_API_KEY")
 
@@ -139,6 +140,9 @@ def safe_execute(query, params=None):
         cur.execute(query, params)
         return cur
 
+def get_cursor():
+    return conn.cursor()
+
 # ---- CREATE TABLES (SAFE) ----
 safe_execute("""
 CREATE TABLE IF NOT EXISTS users (
@@ -175,19 +179,6 @@ CREATE TABLE IF NOT EXISTS deposits (
 
 conn.commit()
 
-# ---- SAFE EXECUTE ----
-def safe_execute(query, params=None):
-    global conn
-    try:
-        cur = conn.cursor()
-        cur.execute(query, params)
-        return cur
-    except psycopg2.OperationalError:
-        conn = psycopg2.connect(DATABASE_URL, sslmode="require")
-        cur = conn.cursor()
-        cur.execute(query, params)
-        return cur
-        
 # --- FUNCTIONS ---
 def get_user_balance(user_id):
     cur = safe_execute("SELECT balance FROM users WHERE user_id=%s", (user_id,))
@@ -253,7 +244,14 @@ def check_receipt(file_url):
             timeout=20
         ).json()
 
-        text = res["ParsedResults"][0]["ParsedText"]
+        if res.get("IsErroredOnProcessing"):
+            return False
+
+        parsed = res.get("ParsedResults")
+        if not parsed:
+            return False
+
+        text = parsed[0].get("ParsedText", "")
 
         if not text or len(text) < 10:
             return False
@@ -641,6 +639,11 @@ async def clean_expired():
         for k in expired:
             pending_deposits.pop(k, None)
 
+        # чистим старые OCR записи
+        for k in list(last_ocr.keys()):
+            if now - last_ocr[k] > 60:
+                last_ocr.pop(k, None)
+
         await asyncio.sleep(30)
         
 # --- PROCESS ---
@@ -691,6 +694,12 @@ async def process(msg: types.Message):
                 await msg.answer(t(uid, "send_screenshot"))
                 return
 
+            now = time.time()
+            if uid in last_ocr and now - last_ocr[uid] < 5:
+                await msg.answer("⏳ Подождите пару секунд")
+                return
+            last_ocr[uid] = now
+
             deposit_id = state["deposit_id"]
 
             if deposit_id not in pending_deposits:
@@ -702,7 +711,7 @@ async def process(msg: types.Message):
             file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
 
             if not check_receipt(file_url):
-                await msg.answer("❌ Похоже это не чек")
+                await msg.answer("❌ Не удалось распознать чек. Отправьте более чёткий скрин")
                 return
 
             data = pending_deposits.pop(deposit_id)
