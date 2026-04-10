@@ -139,7 +139,9 @@ def safe_execute(query, params=None):
         cur = conn.cursor()
         cur.execute(query, params)
         return cur
-
+        
+def get_cursor():
+    return conn.cursor()
 # ---- CREATE TABLES (SAFE) ----
 safe_execute("""
 CREATE TABLE IF NOT EXISTS users (
@@ -240,6 +242,9 @@ def check_receipt(file_url):
             },
             timeout=20
         ).json()
+        
+        if res.get("IsErroredOnProcessing"):
+            return False
 
         parsed = res.get("ParsedResults")
         if not parsed:
@@ -632,6 +637,11 @@ async def clean_expired():
 
         for k in expired:
             pending_deposits.pop(k, None)
+            
+        # чистим старые OCR записи
+        for k in list(last_ocr.keys()):
+            if now - last_ocr[k] > 60:
+                last_ocr.pop(k, None)
 
         await asyncio.sleep(30)
         
@@ -700,7 +710,7 @@ async def process(msg: types.Message):
             file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
 
             if not check_receipt(file_url):
-                await msg.answer("❌ Похоже это не чек. Попробуйте ещё раз или отправьте другой скрин")
+                await msg.answer("❌ Не удалось распознать чек. Отправьте более чёткий скрин")
                 return
 
             data = pending_deposits.pop(deposit_id)
