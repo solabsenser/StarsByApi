@@ -1,7 +1,7 @@
 import asyncio
 import requests
 import os
-import time
+import logging
 from datetime import datetime
 
 import psycopg2
@@ -27,10 +27,6 @@ dp = Dispatcher()
 API_URL = "https://smm.myxvest2.ru/api/v2"
 
 user_lang_cache = {}
-pending_deposits = {}
-last_ocr = {}
-
-OCR_API_KEY = os.getenv("OCR_API_KEY", "ТВОЙ_API_KEY")
 
 # ---- LANGUAGE CHANGER ----
 TEXTS = {
@@ -110,6 +106,10 @@ TEXTS = {
         "ru": "❌ Отправьте скриншот",
         "uz": "❌ Skrinshot yuboring"
     },
+    "enter_number": {
+    "ru": "❌ Введите число",
+    "uz": "❌ Raqam kiriting"
+    },
     "check_sent": {
         "ru": "✅ Чек отправлен на проверку",
         "uz": "✅ Chek tekshiruvga yuborildi"
@@ -128,20 +128,43 @@ def reconnect():
     conn = psycopg2.connect(DATABASE_URL, sslmode="require")
 
 # ---- SAFE EXECUTE ----
-def safe_execute(query, params=None):
+def safe_execute(query, params=None, fetchone=False, fetchall=False):
     global conn
+
     try:
         cur = conn.cursor()
         cur.execute(query, params)
-        return cur
+
+        result = None
+        if fetchone:
+            result = cur.fetchone()
+        elif fetchall:
+            result = cur.fetchall()
+
+        conn.commit()
+        cur.close()
+        return result
+
     except psycopg2.OperationalError:
-        reconnect()
+        conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+
         cur = conn.cursor()
         cur.execute(query, params)
-        return cur
+
+        result = None
+        if fetchone:
+            result = cur.fetchone()
+        elif fetchall:
+            result = cur.fetchall()
+
+        conn.commit()
+        cur.close()
+        return result
+
+    except Exception as e:
+        print(f"[DB ERROR] {e}")
+        return None
         
-def get_cursor():
-    return conn.cursor()
 # ---- CREATE TABLES (SAFE) ----
 safe_execute("""
 CREATE TABLE IF NOT EXISTS users (
@@ -177,11 +200,14 @@ CREATE TABLE IF NOT EXISTS deposits (
 """)
 
 conn.commit()
-
+        
 # --- FUNCTIONS ---
 def get_user_balance(user_id):
-    cur = safe_execute("SELECT balance FROM users WHERE user_id=%s", (user_id,))
-    row = cur.fetchone()
+    row = safe_execute(
+        "SELECT balance FROM users WHERE user_id=%s",
+        (user_id,),
+        fetchone=True
+    )
 
     if row:
         return row[0]
@@ -229,38 +255,6 @@ def get_user_lang(user_id):
 def t(user_id, key):
     lang = user_lang_cache.get(user_id, "ru")
     return TEXTS[key][lang]
-
-
-def check_receipt(file_url):
-    try:
-        res = requests.post(
-            "https://api.ocr.space/parse/image",
-            data={
-                "apikey": OCR_API_KEY,
-                "url": file_url,
-                "language": "eng"
-            },
-            timeout=20
-        ).json()
-        
-        if res.get("IsErroredOnProcessing"):
-            return False
-
-        parsed = res.get("ParsedResults")
-        if not parsed:
-            return False
-
-        text = parsed[0].get("ParsedText", "")
-
-        if not text or len(text) < 10:
-            return False
-
-        if not any(c.isdigit() for c in text):
-            return False
-
-        return True
-    except Exception:
-        return False
     
 # --- STATE ---
 user_state = {}
@@ -283,7 +277,9 @@ def main_kb(uid):
         resize_keyboard=True
     )
     
-def stars_kb():
+def stars_kb(uid):
+    lang = user_lang_cache.get(uid, "ru")
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -306,14 +302,25 @@ def stars_kb():
                 InlineKeyboardButton(text="⭐ 3000", callback_data="buy_3000"),
             ],
             [
-                InlineKeyboardButton(text="🔙 Назад", callback_data="back_main"),
+                InlineKeyboardButton(
+                    text="🔙 Orqaga" if lang == "uz" else "🔙 Назад",
+                    callback_data="back_main"
+                ),
             ],
         ]
     )
-    
-def back_kb():
+
+
+def back_kb(uid):
+    lang = user_lang_cache.get(uid, "ru")
+
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_stars")]
+        [
+            InlineKeyboardButton(
+                text="🔙 Orqaga" if lang == "uz" else "🔙 Назад",
+                callback_data="back_stars"
+            )
+        ]
     ])
 
 def admin_kb(deposit_id):
@@ -345,10 +352,11 @@ def lang_kb():
 async def start(msg: types.Message):
     uid = msg.from_user.id
 
-    # если нет в кеше — ставим дефолт без БД
+    user_state.pop(uid, None)  # 💥 ДОБАВЬ
+
     if uid not in user_lang_cache:
         user_lang_cache[uid] = "ru"
-
+        
     await msg.answer(
         t(uid, "welcome"),
         reply_markup=main_kb(uid)
@@ -363,13 +371,18 @@ async def stats_cmd(msg: types.Message):
     
 @dp.message(F.text.in_(["💰 Баланс", "💰 Balans"]))
 async def balance(msg: types.Message):
-    user_balance = get_user_balance(msg.from_user.id)
+    uid = msg.from_user.id
+
+    user_state.pop(uid, None)  # 💥 ДОБАВЬ
+
+    user_balance = get_user_balance(uid)
     await msg.answer(f"{t(msg.from_user.id, 'balance')}: {format_price(user_balance)} UZS")
 
 @dp.message(F.text.in_(["⭐ Купить Stars", "⭐ Stars sotib olish"]))
 async def buy(msg: types.Message):
     uid = msg.from_user.id
 
+    user_state.pop(uid, None)  # 💥 ДОБАВЬ
     # берём язык ТОЛЬКО из кеша (никакого SQL)
     lang = user_lang_cache.get(uid, "ru")
 
@@ -379,19 +392,63 @@ async def buy(msg: types.Message):
         f"{t(uid, 'min')}\n"
         f"{t(uid, 'price')}: {PRICE_PER_STAR} UZS/Star\n\n"
         f"{t(uid, 'use_buttons')}",
-        reply_markup=stars_kb()
+        reply_markup=stars_kb(uid)
     )
 
     user_state[uid] = {"step": "amount"}
     
 @dp.message(F.text.in_(["💳 Пополнить", "💳 To‘ldirish"]))
 async def deposit(msg: types.Message):
-    await msg.answer(t(msg.from_user.id, "deposit"))
-    user_state[msg.from_user.id] = {"step": "deposit_amount"}
+    uid = msg.from_user.id
 
+    user_state.pop(uid, None)  # 💥 ДОБАВЬ СЮДА
+
+    # ищем активный депозит
+    row = safe_execute(
+        """
+        SELECT id FROM deposits 
+        WHERE user_id=%s 
+        AND status IN ('waiting', 'pending')
+        ORDER BY id DESC LIMIT 1
+        """,
+        (uid,),
+        fetchone=True
+    )
+
+    lang = user_lang_cache.get(uid, "ru")
+
+    # 💥 ЕСЛИ УЖЕ ЕСТЬ ПЛАТЕЖ
+    if row:
+        deposit_id = row[0]
+
+        user_state[uid] = {
+            "step": "await_screenshot",
+            "deposit_id": deposit_id
+        }
+
+        await msg.answer(
+            "📸 Sizda faol to‘lov bor — chek yuboring"
+            if lang == "uz"
+            else "📸 У вас уже есть активный платёж — отправьте чек"
+        )
+        return
+
+    # 💥 ЕСЛИ НЕТ — создаём новый
+    user_state.pop(uid, None)
+
+    await msg.answer(t(uid, "deposit"))
+    user_state[uid] = {"step": "deposit_amount"}
+    
 @dp.message(F.text.in_(["🌐 Выбрать язык", "🌐 Tilni tanlash"]))
 async def choose_lang(msg: types.Message):
-    await msg.answer(t(msg.from_user.id, "choose_lang"), reply_markup=lang_kb())
+    uid = msg.from_user.id
+
+    user_state.pop(uid, None)  # 💥 сброс state
+
+    await msg.answer(
+        t(uid, "choose_lang"),
+        reply_markup=lang_kb()
+    )
     
 # --- CALLBACK ---
 @dp.callback_query()
@@ -458,7 +515,7 @@ async def callbacks(call: types.CallbackQuery):
             f"{t(uid, 'min')}\n"
             f"{t(uid, 'price')}: {PRICE_PER_STAR} UZS/Star\n\n"
             f"{t(uid, 'use_buttons')}",
-            reply_markup=stars_kb()
+            reply_markup=stars_kb(uid)
         )
 
         user_state[uid] = {"step": "amount"}
@@ -478,15 +535,18 @@ async def callbacks(call: types.CallbackQuery):
             f"{'⭐ Siz tanladingiz:' if lang=='uz' else '⭐ Вы выбрали:'} {amount} Stars\n"
             f"💰 {'Narxi' if lang=='uz' else 'Стоимость'}: {format_price(amount * PRICE_PER_STAR)} UZS\n"
             f"👤 {'Username kiriting:' if lang=='uz' else 'Введите username получателя:'}",
-            reply_markup=back_kb()
+            reply_markup=back_kb(uid)
         )
         
     # --- ADMIN ACTIONS ---
     if call.data.startswith("approve_"):
         deposit_id = int(call.data.split("_")[1])
 
-        cur = safe_execute("SELECT user_id, amount FROM deposits WHERE id=%s", (deposit_id,))
-        row = cur.fetchone()
+        row = safe_execute(
+            "SELECT user_id, amount FROM deposits WHERE id=%s",
+            (deposit_id,),
+            fetchone=True
+        )
 
         if row:
             user_id, amount = row
@@ -509,11 +569,15 @@ async def callbacks(call: types.CallbackQuery):
             )
 
             # пользователю
+            lang = user_lang_cache.get(user_id, "ru")
+
             await bot.send_message(
                 user_id,
-                f"✅ Баланс пополнен!\n\n"
-                f"💰 +{amount} UZS\n"
-                f"🆔 ID: {deposit_id}"
+                (
+                    f"✅ {'Balans to‘ldirildi!' if lang == 'uz' else 'Баланс пополнен!'}\n\n"
+                    f"💰 +{amount} UZS\n"
+                    f"🆔 ID: {deposit_id}"
+                )
             )
 
             # ❗ reply под фото (вместо нового сообщения)
@@ -525,8 +589,11 @@ async def callbacks(call: types.CallbackQuery):
     if call.data.startswith("cancel_"):
         deposit_id = int(call.data.split("_")[1])
 
-        cur = safe_execute("SELECT user_id, amount FROM deposits WHERE id=%s", (deposit_id,))
-        row = cur.fetchone()
+        row = safe_execute(
+            "SELECT user_id, amount FROM deposits WHERE id=%s",
+            (deposit_id,),
+            fetchone=True
+        )
 
         if row:
             user_id, amount = row
@@ -547,11 +614,15 @@ async def callbacks(call: types.CallbackQuery):
             )
 
             # пользователю
+            lang = user_lang_cache.get(user_id, "ru")
+
             await bot.send_message(
                 user_id,
-                f"❌ Платёж отклонён\n\n"
-                f"🆔 ID: {deposit_id}\n"
-                f"💡 Проверьте чек или свяжитесь с админом"
+                (
+                    f"❌ {'To‘lov rad etildi' if lang == 'uz' else 'Платёж отклонён'}\n\n"
+                    f"🆔 ID: {deposit_id}\n"
+                    f"💡 {'Chekni tekshiring yoki admin bilan bog‘laning' if lang == 'uz' else 'Проверьте чек или свяжитесь с админом'}"
+                )
             )
 
             # ❗ reply под фото
@@ -580,8 +651,24 @@ async def process_order(uid, username, amount, msg):
     processing_msg = await msg.answer(t(uid, "processing"))
     
     loop = asyncio.get_event_loop()
-    res = await loop.run_in_executor(None, buy_stars, username, amount)
+    try:
+        loop = asyncio.get_event_loop()
+        res = await loop.run_in_executor(None, buy_stars, username, amount)
 
+        if not isinstance(res, dict) or not res.get("success"):
+            raise Exception(f"API вернул ошибку: {res}")
+
+    except Exception as e:
+        logging.error(f"API ERROR: {e}")
+
+        update_balance(uid, total_price)
+
+        await processing_msg.edit_text(
+            f"{t(uid, 'error_order')}\n"
+            f"{t(uid, 'send_admin')}: @your_admin_username"
+        )
+        return
+    
     if res["success"]:
         order_id = generate_order_id()
 
@@ -625,25 +712,27 @@ async def process_order(uid, username, amount, msg):
             f"{t(uid, 'error_order')}\n"
             f"{t(uid, 'send_admin')}: @your_admin_username"
         )
-        
-async def clean_expired():
-    while True:
-        now = time.time()
+    
+# --- EXPIRE ---
+async def expire_payment(deposit_id, user_id):
+    await asyncio.sleep(600)
 
-        expired = [
-            k for k, v in pending_deposits.items()
-            if v["expire"] < now
-        ]
+    row = safe_execute(
+        "SELECT status FROM deposits WHERE id=%s",
+        (deposit_id,),
+        fetchone=True
+    )
 
-        for k in expired:
-            pending_deposits.pop(k, None)
-            
-        # чистим старые OCR записи
-        for k in list(last_ocr.keys()):
-            if now - last_ocr[k] > 60:
-                last_ocr.pop(k, None)
+    # ❗ ВАЖНО: проверяем что ещё не отменён и не подтверждён
+    if row and row[0] == "waiting":
+        safe_execute("UPDATE deposits SET status='expired' WHERE id=%s", (deposit_id,))
+        conn.commit()
 
-        await asyncio.sleep(30)
+        lang = user_lang_cache.get(user_id, "ru")
+        await bot.send_message(
+            user_id,
+            f"❌ {'To‘lov bekor qilindi (vaqt tugadi)' if lang=='uz' else 'Платёж отменён (время вышло)'} #{deposit_id}"
+        )
         
 # --- PROCESS ---
 @dp.message()
@@ -661,93 +750,100 @@ async def process(msg: types.Message):
             user_state.pop(uid, None)
 
         elif state["step"] == "deposit_amount":
-            try:
-                amount = int(msg.text)
-            except ValueError:
-                await msg.answer("❌ Введите число")
+
+            if not msg.text or not msg.text.isdigit():
+                await msg.answer(t(uid, "enter_number"))
                 return
+
+            amount = int(msg.text)
 
             if amount < 1000:
                 await msg.answer(t(uid, "min_deposit"))
                 return
 
-            deposit_id = int(time.time() * 1000)
+            expire_time = datetime.now().timestamp() + 600
 
-            pending_deposits[deposit_id] = {
-                "user_id": uid,
-                "amount": amount,
-                "expire": time.time() + 600
-            }
+            row = safe_execute(
+                "INSERT INTO deposits (user_id, amount, status, date, expire_at) VALUES (%s,%s,%s,%s,%s) RETURNING id",
+                (uid, amount, "waiting", datetime.now().strftime("%Y-%m-%d %H:%M"), str(expire_time)),
+                fetchone=True
+            )
+            deposit_id = row[0]
+            conn.commit()
+
+            lang = user_lang_cache.get(uid, "ru")
 
             await msg.answer(
+                f"{'✅ To‘lov qabul qilindi!' if lang=='uz' else '✅ Сумма платежа принята!'}\n\n"
                 f"🆔 ID: {deposit_id}\n"
-                f"💰 {format_price(amount)} UZS\n"
-                f"💳 {CARD_NUMBER}\n\n"
-                f"📸 Отправьте чек"
-            )
+                f"💵 {'Summa' if lang=='uz' else 'Сумма'}: {format_price(amount)}\n"
+                f"💳 {'To‘lov uchun' if lang=='uz' else 'Для оплаты'}: <code>{CARD_NUMBER}</code>\n\n"
 
+                f"📸 <b>{'To‘lovdan so‘ng chek yuboring' if lang=='uz' else 'После оплаты отправьте сюда чек (скриншот)'}</b>\n\n"
+
+                f"<blockquote>{'♻️ To‘lov tekshiriladi va balansga qo‘shiladi' if lang=='uz' else '♻️ После совершения платежа средства будут рассмотрены админами и зачислены на ваш счет.'}</blockquote>\n\u200b\n"
+                f"<blockquote>{'⏰ 10 daqiqa ichida to‘lov bo‘lmasa bekor qilinadi' if lang=='uz' else '⏰ Если платеж не поступит в течение 10 минут, он будет отменен.'}</blockquote>",
+
+                parse_mode="HTML"
+            )
+            
             user_state[uid] = {"step": "await_screenshot", "deposit_id": deposit_id}
 
+            asyncio.create_task(expire_payment(deposit_id, uid))
+
         elif state["step"] == "await_screenshot":
+
+            deposit_id = state["deposit_id"]
+
+            # 🔍 проверяем статус депозита
+            row = safe_execute(
+                "SELECT amount FROM deposits WHERE id=%s",
+                (deposit_id,),
+                fetchone=True
+            )
+            amount = row[0]
+
+            if not row or row[0] != "waiting":
+                return
+
             if not msg.photo:
                 await msg.answer(t(uid, "send_screenshot"))
                 return
 
-            now = time.time()
-            if uid in last_ocr and now - last_ocr[uid] < 5:
-                await msg.answer("⏳ Подождите пару секунд")
-                return
-            last_ocr[uid] = now
+            file_id = msg.photo[-1].file_id
 
-            deposit_id = state["deposit_id"]
-
-            if deposit_id not in pending_deposits:
-                await msg.answer("❌ Платёж устарел")
-                user_state.pop(uid, None)
-                return
-
-            file = await bot.get_file(msg.photo[-1].file_id)
-            file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
-
-            if not check_receipt(file_url):
-                await msg.answer("❌ Не удалось распознать чек. Отправьте более чёткий скрин")
-                return
-
-            data = pending_deposits.pop(deposit_id)
-
-            cur = safe_execute(
-                "INSERT INTO deposits (user_id, amount, status, date, screenshot) VALUES (%s,%s,%s,%s,%s) RETURNING id",
-                (
-                    data["user_id"],
-                    data["amount"],
-                    "pending",
-                    datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    msg.photo[-1].file_id
-                )
+            safe_execute(
+                "UPDATE deposits SET screenshot=%s, status='pending' WHERE id=%s",
+                (file_id, deposit_id)
             )
-
-            real_id = cur.fetchone()[0]
             conn.commit()
 
-            await msg.answer("✅ Чек отправлен на проверку")
+            await msg.answer(t(uid, "check_sent"))
+
+            user_state.pop(uid, None)
+            
+            cur = safe_execute("SELECT amount FROM deposits WHERE id=%s", (deposit_id,))
+            amount = cur.fetchone()[0]
+            
+            user_username = msg.from_user.username
+            user_display = f"@{user_username}" if user_username else f"id:{uid}"
 
             await bot.send_photo(
                 ADMIN_GROUP_ID,
-                photo=msg.photo[-1].file_id,
+                photo=file_id,
                 caption=(
                     f"💳 Новый платёж\n"
-                    f"🆔 ID: {real_id}\n"
-                    f"👤 @{msg.from_user.username or uid}\n"
-                    f"💰 {data['amount']} UZS"
+                    f"🆔 ID: {deposit_id}\n"
+                    f"👤 {user_display}\n"
+                    f"💰 {amount} UZS"
                 ),
-                reply_markup=admin_kb(real_id)
+                reply_markup=admin_kb(deposit_id)
             )
 
             user_state.pop(uid, None)
             
 # --- RUN ---
 async def main():
-    asyncio.create_task(clean_expired())
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
