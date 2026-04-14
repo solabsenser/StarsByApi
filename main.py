@@ -6,6 +6,7 @@ from datetime import datetime
 
 import psycopg2
 from aiogram import Bot, Dispatcher, types, F
+from aiogram import BaseMiddleware
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
 from analytics import generate_stats
@@ -26,7 +27,10 @@ dp = Dispatcher()
 
 API_URL = "https://smm.myxvest2.ru/api/v2"
 
+# --- CACHE ---
 user_lang_cache = {}
+user_last_action = {}
+SPAM_DELAY = 1  # секунды
 
 # ---- LANGUAGE CHANGER ----
 TEXTS = {
@@ -256,6 +260,42 @@ def t(user_id, key):
     lang = user_lang_cache.get(user_id, "ru")
     return TEXTS[key][lang]
     
+def is_spamming(uid):
+    now = asyncio.get_event_loop().time()
+
+    last = user_last_action.get(uid)
+    if last and (now - last < SPAM_DELAY):
+        return True
+
+    user_last_action[uid] = now
+    return False
+    
+def cleanup_spam():
+    now = asyncio.get_event_loop().time()
+    to_delete = []
+
+    for uid, t in user_last_action.items():
+        if now - t > 60:  # старше 60 сек
+            to_delete.append(uid)
+
+    for uid in to_delete:
+        del user_last_action[uid]
+        
+class AntiSpamMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event, data):
+        if hasattr(event, "from_user"):
+            uid = event.from_user.id
+
+            if is_spamming(uid):
+                if hasattr(event, "answer"):
+                    await event.answer("⏳ Подождите...")
+                return
+
+        return await handler(event, data)
+        
+dp.message.middleware(AntiSpamMiddleware())
+dp.callback_query.middleware(AntiSpamMiddleware())
+
 # --- STATE ---
 user_state = {}
 
@@ -665,7 +705,7 @@ async def process_order(uid, username, amount, msg):
 
         await processing_msg.edit_text(
             f"{t(uid, 'error_order')}\n"
-            f"{t(uid, 'send_admin')}: @your_admin_username"
+            f"{t(uid, 'send_admin')}: @premstars_support"
         )
         return
     
@@ -797,11 +837,10 @@ async def process(msg: types.Message):
 
             # 🔍 проверяем статус депозита
             row = safe_execute(
-                "SELECT amount FROM deposits WHERE id=%s",
+                "SELECT status FROM deposits WHERE id=%s",
                 (deposit_id,),
                 fetchone=True
             )
-            amount = row[0]
 
             if not row or row[0] != "waiting":
                 return
@@ -822,8 +861,12 @@ async def process(msg: types.Message):
 
             user_state.pop(uid, None)
             
-            cur = safe_execute("SELECT amount FROM deposits WHERE id=%s", (deposit_id,))
-            amount = cur.fetchone()[0]
+            row = safe_execute(
+                "SELECT amount FROM deposits WHERE id=%s",
+                (deposit_id,),
+                fetchone=True
+            )
+            amount = row[0]
             
             user_username = msg.from_user.username
             user_display = f"@{user_username}" if user_username else f"id:{uid}"
