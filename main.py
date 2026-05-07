@@ -31,7 +31,7 @@ API_URL = "https://smm.myxvest2.ru/api/v2"
 # --- CACHE ---
 user_lang_cache = {}
 user_last_action = {}
-SPAM_DELAY = 1  # секунды
+SPAM_DELAY = 0.3 # секунды
 
 # ---- LANGUAGE CHANGER ----
 TEXTS = {
