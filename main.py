@@ -12,6 +12,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 from dotenv import load_dotenv
 from analytics import generate_stats
 from aiogram.enums import ParseMode
+from profile_module import register_profile
 
 load_dotenv()
 
@@ -300,6 +301,14 @@ dp.callback_query.middleware(AntiSpamMiddleware())
 # --- STATE ---
 user_state = {}
 
+register_profile(
+    dp,
+    safe_execute,
+    get_user_balance,
+    format_price,
+    user_state
+)
+
 # --- KEYBOARDS ---
 def main_kb(uid):
     lang = user_lang_cache.get(uid, "ru")
@@ -310,6 +319,9 @@ def main_kb(uid):
             [
                 KeyboardButton(text="💳 To‘ldirish" if lang == "uz" else "💳 Пополнить"),
                 KeyboardButton(text="💰 Balans" if lang == "uz" else "💰 Баланс")
+            ],
+            [
+                KeyboardButton(text="👤 Profil" if lang == "uz" else "👤 Профиль")
             ],
             [
                 KeyboardButton(text="🌐 Tilni tanlash" if lang == "uz" else "🌐 Выбрать язык")
@@ -782,6 +794,27 @@ async def process(msg: types.Message):
 
     if uid in user_state:
         state = user_state[uid]
+
+        if state["step"] == "email_input":
+
+            email = msg.text.strip()
+
+            safe_execute(
+                """
+                UPDATE users
+                SET email=%s,
+                    email_verified=TRUE
+                WHERE user_id=%s
+                """,
+                (email, uid)
+            )
+
+            await msg.answer(
+                f"✅ Email подключён:\n{email}"
+            )
+
+            user_state.pop(uid, None)
+            return
 
         if state["step"] == "username":
             username = msg.text.replace("@", "")
