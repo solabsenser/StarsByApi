@@ -809,6 +809,19 @@ async def process(msg: types.Message):
                 (email, uid)
             )
 
+            try:
+                await bot.delete_message(
+                    msg.chat.id,
+                    state["prompt_msg_id"]
+                )
+            except:
+                pass
+
+            try:
+                await msg.delete()
+            except:
+                pass
+
             await msg.answer(
                 f"✅ Email подключён:\n{email}"
             )
