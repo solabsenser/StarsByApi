@@ -522,7 +522,7 @@ async def help_menu(msg: types.Message):
             "❓ Yordam\n\n"
             "⭐ Ushbu bot orqali Telegram Stars sotib olishingiz mumkin.\n\n"
             "💳 Balansni to‘ldiring va bir necha soniyada yulduzlarni qabul qiling.\n\n"
-            "📢 Kanal: @YOUR_CHANNEL\n"
+            "📢 Kanal: @premstars77\n"
             "👨‍💻 Qo‘llab-quvvatlash: @premstars_support\n\n"
             "💎 Tez, qulay va xavfsiz."
         )
@@ -531,7 +531,7 @@ async def help_menu(msg: types.Message):
             "❓ Помощь\n\n"
             "⭐ Через этого бота вы можете быстро покупать Telegram Stars.\n\n"
             "💳 Пополните баланс и получите звёзды за несколько секунд.\n\n"
-            "📢 Канал: @YOUR_CHANNEL\n"
+            "📢 Канал: @premstars77\n"
             "👨‍💻 Поддержка: @premstars_support\n\n"
             "💎 Быстро, удобно и безопасно."
         )
