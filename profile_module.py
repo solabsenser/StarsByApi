@@ -1,4 +1,3 @@
-```python
 from aiogram import types, F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -77,4 +76,4 @@ def register_profile(dp, safe_execute, get_user_balance, format_price, user_stat
         )
 
         await call.answer()
-```
+        
