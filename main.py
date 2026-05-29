@@ -14,6 +14,7 @@ from analytics import generate_stats
 from aiogram.enums import ParseMode
 from profile_module import register_profile
 from mailer import send_receipt_email
+from broadcast import register_broadcast
 
 load_dotenv()
 
@@ -301,6 +302,13 @@ dp.callback_query.middleware(AntiSpamMiddleware())
 
 # --- STATE ---
 user_state = {}
+
+register_broadcast(
+    dp,
+    bot,
+    ADMIN_IDS,
+    safe_execute
+)
 
 register_profile(
     dp,
