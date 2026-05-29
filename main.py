@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from analytics import generate_stats
 from aiogram.enums import ParseMode
 from profile_module import register_profile
+from mailer import send_receipt_email
 
 load_dotenv()
 
@@ -724,7 +725,29 @@ async def process_order(uid, username, amount, msg):
     
     if res["success"]:
         order_id = generate_order_id()
+        
+        row = safe_execute(
+            """
+            SELECT email,email_verified
+            FROM users
+            WHERE user_id=%s
+            """,
+            (uid,),
+            fetchone=True
+        )
 
+        if row and row[0]:
+            try:
+                send_receipt_email(
+                    row[0],
+                    order_id,
+                    username,
+                    amount,
+                    total_price
+                )
+            except Exception as e:
+                print("EMAIL ERROR:", e)
+                
         safe_execute(
             "INSERT INTO orders (user_id, username, amount, price, order_id, status, date) VALUES (%s,%s,%s,%s,%s,%s,%s)",
             (uid, username, amount, total_price, order_id, "success", datetime.now().strftime("%Y-%m-%d %H:%M"))
