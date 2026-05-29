@@ -316,16 +316,16 @@ def main_kb(uid):
 
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="⭐ Stars sotib olish" if lang == "uz" else "⭐ Купить Stars")],
             [
-                KeyboardButton(text="💳 To‘ldirish" if lang == "uz" else "💳 Пополнить"),
-                KeyboardButton(text="💰 Balans" if lang == "uz" else "💰 Баланс")
+                KeyboardButton(text="⭐ Stars sotib olish" if lang == "uz" else "⭐ Купить Stars"),
+                KeyboardButton(text="💳 To‘ldirish" if lang == "uz" else "💳 Пополнить")
             ],
             [
-                KeyboardButton(text="👤 Profil" if lang == "uz" else "👤 Профиль"),
-                KeyboardButton(text="❓ Yordam" if lang == "uz" else "❓ Помощь")
+                KeyboardButton(text="💰 Balans" if lang == "uz" else "💰 Баланс"),
+                KeyboardButton(text="👤 Profil" if lang == "uz" else "👤 Профиль")
             ],
             [
+                KeyboardButton(text="❓ Yordam" if lang == "uz" else "❓ Помощь"),
                 KeyboardButton(text="🌐 Tilni tanlash" if lang == "uz" else "🌐 Выбрать язык")
             ]
         ],
