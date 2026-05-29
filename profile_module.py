@@ -63,17 +63,19 @@ def register_profile(dp, safe_execute, get_user_balance, format_price, user_stat
             reply_markup=kb
         )
 
-    @dp.callback_query(F.data == "connect_email")
-    async def connect_email(call: types.CallbackQuery):
-        uid = call.from_user.id
+@dp.callback_query(F.data == "connect_email")
+async def connect_email(call: types.CallbackQuery):
+    uid = call.from_user.id
 
-        user_state[uid] = {
-            "step": "email_input"
-        }
+    user_state[uid] = {
+        "step": "email_input"
+    }
 
-        await call.message.answer(
-            "📧 Введите Email:"
-        )
+    await call.message.delete()
 
-        await call.answer()
+    await call.message.answer(
+        "📧 Введите Email:"
+    )
+
+    await call.answer()
         
