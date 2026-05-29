@@ -322,7 +322,8 @@ def main_kb(uid):
                 KeyboardButton(text="💰 Balans" if lang == "uz" else "💰 Баланс")
             ],
             [
-                KeyboardButton(text="👤 Profil" if lang == "uz" else "👤 Профиль")
+                KeyboardButton(text="👤 Profil" if lang == "uz" else "👤 Профиль"),
+                KeyboardButton(text="❓ Yordam" if lang == "uz" else "❓ Помощь")
             ],
             [
                 KeyboardButton(text="🌐 Tilni tanlash" if lang == "uz" else "🌐 Выбрать язык")
@@ -503,6 +504,31 @@ async def choose_lang(msg: types.Message):
         t(uid, "choose_lang"),
         reply_markup=lang_kb()
     )
+
+@dp.message(F.text.in_(["❓ Помощь", "❓ Yordam"]))
+async def help_menu(msg: types.Message):
+    lang = user_lang_cache.get(msg.from_user.id, "ru")
+
+    if lang == "uz":
+        text = (
+            "❓ Yordam\n\n"
+            "⭐ Ushbu bot orqali Telegram Stars sotib olishingiz mumkin.\n\n"
+            "💳 Balansni to‘ldiring va bir necha soniyada yulduzlarni qabul qiling.\n\n"
+            "📢 Kanal: @YOUR_CHANNEL\n"
+            "👨‍💻 Qo‘llab-quvvatlash: @premstars_support\n\n"
+            "💎 Tez, qulay va xavfsiz."
+        )
+    else:
+        text = (
+            "❓ Помощь\n\n"
+            "⭐ Через этого бота вы можете быстро покупать Telegram Stars.\n\n"
+            "💳 Пополните баланс и получите звёзды за несколько секунд.\n\n"
+            "📢 Канал: @YOUR_CHANNEL\n"
+            "👨‍💻 Поддержка: @premstars_support\n\n"
+            "💎 Быстро, удобно и безопасно."
+        )
+
+    await msg.answer(text)
     
 # --- CALLBACK ---
 @dp.callback_query()
