@@ -1,15 +1,12 @@
 import os
-import smtplib
-from email.mime.text import MIMEText
+import requests
 from dotenv import load_dotenv
 
 load_dotenv()
 
-EMAIL_LOGIN = os.getenv("EMAIL_LOGIN")
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
-
-print("EMAIL_LOGIN =", EMAIL_LOGIN)
-print("EMAIL_PASSWORD =", bool(EMAIL_PASSWORD))
+BREVO_API_KEY = os.getenv("BREVO_API_KEY")
+SENDER_EMAIL = os.getenv("BREVO_SENDER_EMAIL")
+SENDER_NAME = os.getenv("BREVO_SENDER_NAME")
 
 
 def send_receipt_email(
@@ -19,46 +16,43 @@ def send_receipt_email(
     stars,
     amount
 ):
-    print("SEND EMAIL TO:", email)
+    headers = {
+        "accept": "application/json",
+        "api-key": BREVO_API_KEY,
+        "content-type": "application/json"
+    }
 
-    text = f"""
-Спасибо за покупку!
+    payload = {
+        "sender": {
+            "name": SENDER_NAME,
+            "email": SENDER_EMAIL
+        },
+        "to": [
+            {
+                "email": email
+            }
+        ],
+        "subject": f"Заказ #{order_id}",
+        "htmlContent": f"""
+        <h2>Спасибо за покупку!</h2>
 
-Номер заказа: {order_id}
-Получатель: @{username}
-Количество звезд: {stars}
-Сумма: {amount} UZS
+        <p><b>Номер заказа:</b> {order_id}</p>
+        <p><b>Получатель:</b> @{username}</p>
+        <p><b>Количество звёзд:</b> {stars}</p>
+        <p><b>Сумма:</b> {amount} UZS</p>
 
-Ваш заказ успешно выполнен.
-"""
+        <hr>
 
-    msg = MIMEText(
-        text,
-        "plain",
-        "utf-8"
+        <p>Ваш заказ успешно выполнен.</p>
+        """
+    }
+
+    response = requests.post(
+        "https://api.brevo.com/v3/smtp/email",
+        headers=headers,
+        json=payload,
+        timeout=30
     )
 
-    msg["Subject"] = f"Заказ #{order_id}"
-    msg["From"] = EMAIL_LOGIN
-    msg["To"] = email
-
-    try:
-        with smtplib.SMTP_SSL(
-            "smtp.gmail.com",
-            465
-        ) as server:
-
-            server.login(
-                EMAIL_LOGIN,
-                EMAIL_PASSWORD
-            )
-
-            print("LOGIN OK")
-
-            server.send_message(msg)
-
-            print("MESSAGE SENT")
-
-    except Exception as e:
-        print("MAILER ERROR:", e)
-        raise
+    print("BREVO STATUS:", response.status_code)
+    print("BREVO RESPONSE:", response.text)ц
