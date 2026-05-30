@@ -759,7 +759,7 @@ async def process_order(uid, username, amount, msg):
     
     if res["success"]:
         order_id = generate_order_id()
-        
+
         row = safe_execute(
             """
             SELECT email,email_verified
@@ -770,7 +770,11 @@ async def process_order(uid, username, amount, msg):
             fetchone=True
         )
 
+        print("EMAIL ROW =", row)
+
         if row and row[0]:
+            print("TRY SEND EMAIL")
+
             try:
                 send_receipt_email(
                     row[0],
@@ -779,6 +783,9 @@ async def process_order(uid, username, amount, msg):
                     amount,
                     total_price
                 )
+
+                print("EMAIL SENT")
+
             except Exception as e:
                 print("EMAIL ERROR:", e)
                 
