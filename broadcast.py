@@ -2,6 +2,7 @@ from aiogram import types, F
 import asyncio
 from mailer import send_receipt_email
 
+
 def register_broadcast(
     dp,
     bot,
@@ -51,59 +52,60 @@ def register_broadcast(
             f"📨 Отправлено: {sent}\n"
             f"❌ Ошибок: {failed}"
         )
-        
-@dp.message(F.text.startswith("/mail "))
-async def send_custom_mail(msg: types.Message):
 
-    if msg.from_user.id not in ADMIN_IDS:
-        return
+    @dp.message(F.text.startswith("/mail "))
+    async def send_custom_mail(msg: types.Message):
 
-    try:
-        parts = msg.text.split(" ", 2)
+        if msg.from_user.id not in ADMIN_IDS:
+            return
 
-        user_id = int(parts[1])
-        text = parts[2]
+        try:
+            parts = msg.text.split(" ", 2)
 
-    except:
-        await msg.answer(
-            "Использование:\n/mail user_id текст"
-        )
-        return
+            user_id = int(parts[1])
+            text = parts[2]
 
-    row = safe_execute(
-        """
-        SELECT email
-        FROM users
-        WHERE user_id=%s
-        """,
-        (user_id,),
-        fetchone=True
-    )
+        except:
+            await msg.answer(
+                "Использование:\n/mail user_id текст"
+            )
+            return
 
-    if not row or not row[0]:
-        await msg.answer(
-            "❌ Email не найден"
-        )
-        return
-
-    email = row[0]
-
-    try:
-
-        send_receipt_email(
-            email,
-            "INFO",
-            "PremStars",
-            "-",
-            text
+        row = safe_execute(
+            """
+            SELECT email
+            FROM users
+            WHERE user_id=%s
+            """,
+            (user_id,),
+            fetchone=True
         )
 
-        await msg.answer(
-            f"✅ Письмо отправлено\n{email}"
-        )
+        if not row or not row[0]:
+            await msg.answer(
+                "❌ Email не найден"
+            )
+            return
 
-    except Exception as e:
+        email = row[0]
 
-        await msg.answer(
-            f"❌ Ошибка:\n{e}"
-        )
+        try:
+
+            send_receipt_email(
+                email,
+                "INFO",
+                "PremStars",
+                "-",
+                text
+            )
+
+            await msg.answer(
+                f"✅ Письмо отправлено\n{email}"
+            )
+
+        except Exception as e:
+
+            await msg.answer(
+                f"❌ Ошибка:\n{e}"
+            )
+            
