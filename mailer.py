@@ -8,6 +8,9 @@ load_dotenv()
 EMAIL_LOGIN = os.getenv("EMAIL_LOGIN")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 
+print("EMAIL_LOGIN =", EMAIL_LOGIN)
+print("EMAIL_PASSWORD =", bool(EMAIL_PASSWORD))
+
 
 def send_receipt_email(
     email,
@@ -16,6 +19,8 @@ def send_receipt_email(
     stars,
     amount
 ):
+    print("SEND EMAIL TO:", email)
+
     text = f"""
 Спасибо за покупку!
 
@@ -27,20 +32,33 @@ def send_receipt_email(
 Ваш заказ успешно выполнен.
 """
 
-    msg = MIMEText(text, "plain", "utf-8")
+    msg = MIMEText(
+        text,
+        "plain",
+        "utf-8"
+    )
 
     msg["Subject"] = f"Заказ #{order_id}"
     msg["From"] = EMAIL_LOGIN
     msg["To"] = email
 
-    with smtplib.SMTP_SSL(
-        "smtp.gmail.com",
-        465
-    ) as server:
+    try:
+        with smtplib.SMTP_SSL(
+            "smtp.gmail.com",
+            465
+        ) as server:
 
-        server.login(
-            EMAIL_LOGIN,
-            EMAIL_PASSWORD
-        )
+            server.login(
+                EMAIL_LOGIN,
+                EMAIL_PASSWORD
+            )
 
-        server.send_message(msg)
+            print("LOGIN OK")
+
+            server.send_message(msg)
+
+            print("MESSAGE SENT")
+
+    except Exception as e:
+        print("MAILER ERROR:", e)
+        raise
