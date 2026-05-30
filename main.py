@@ -455,7 +455,15 @@ async def testmail(msg: types.Message):
         await msg.answer(
             f"❌ Ошибка:\n{e}"
         )    
-        
+
+@dp.message(F.text == "/myip")
+async def myip(msg: types.Message):
+    import requests
+
+    ip = requests.get("https://api.ipify.org").text
+
+    await msg.answer(ip)
+    
 @dp.message(F.text.in_(["💰 Баланс", "💰 Balans"]))
 async def balance(msg: types.Message):
     uid = msg.from_user.id
