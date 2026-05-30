@@ -55,4 +55,4 @@ def send_receipt_email(
     )
 
     print("BREVO STATUS:", response.status_code)
-    print("BREVO RESPONSE:", response.text)ц
+    print("BREVO RESPONSE:", response.text)
