@@ -53,6 +53,3 @@ def send_receipt_email(
         json=payload,
         timeout=30
     )
-
-    print("BREVO STATUS:", response.status_code)
-    print("BREVO RESPONSE:", response.text)
