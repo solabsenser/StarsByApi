@@ -432,38 +432,6 @@ async def stats_cmd(msg: types.Message):
 
     await msg.answer("📊 Выберите период:", reply_markup=stats_kb)
     
-@dp.message(F.text == "/testmail")
-async def testmail(msg: types.Message):
-
-    if msg.from_user.id not in ADMIN_IDS:
-        return
-
-    try:
-        send_receipt_email(
-            "islomkambarov14@gmail.com",  # сюда свой email
-            "TEST-12345",
-            "premstars_test",
-            50,
-            5000
-        )
-
-        await msg.answer(
-            "✅ Тестовое письмо отправлено"
-        )
-
-    except Exception as e:
-        await msg.answer(
-            f"❌ Ошибка:\n{e}"
-        )    
-
-@dp.message(F.text == "/myip")
-async def myip(msg: types.Message):
-    import requests
-
-    ip = requests.get("https://api.ipify.org").text
-
-    await msg.answer(ip)
-    
 @dp.message(F.text.in_(["💰 Баланс", "💰 Balans"]))
 async def balance(msg: types.Message):
     uid = msg.from_user.id
@@ -802,10 +770,7 @@ async def process_order(uid, username, amount, msg):
             fetchone=True
         )
 
-        print("EMAIL ROW =", row)
-
         if row and row[0]:
-            print("TRY SEND EMAIL")
 
             try:
                 send_receipt_email(
@@ -815,8 +780,6 @@ async def process_order(uid, username, amount, msg):
                     amount,
                     total_price
                 )
-
-                print("EMAIL SENT")
 
             except Exception as e:
                 print("EMAIL ERROR:", e)
