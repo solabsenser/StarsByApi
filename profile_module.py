@@ -7,6 +7,14 @@ def register_profile(dp, safe_execute, get_user_balance, format_price, user_stat
     async def profile(msg: types.Message):
         uid = msg.from_user.id
 
+        lang_row = safe_execute(
+            "SELECT lang FROM users WHERE user_id=%s",
+            (uid,),
+            fetchone=True
+        )
+
+        lang = lang_row[0] if lang_row else "ru"
+
         row = safe_execute(
             """
             SELECT email,email_verified
@@ -17,7 +25,7 @@ def register_profile(dp, safe_execute, get_user_balance, format_price, user_stat
             fetchone=True
         )
 
-        email = "Не подключен"
+        email = "Ulanmagan" if lang == "uz" else "Не подключен"
         verified = "❌"
 
         if row and row[0]:
@@ -46,26 +54,48 @@ def register_profile(dp, safe_execute, get_user_balance, format_price, user_stat
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="📧 Подключить Email",
+                        text="📧 Email ulash" if lang == "uz" else "📧 Подключить Email",
                         callback_data="connect_email"
                     )
                 ]
             ]
         )
 
+        if lang == "uz":
+            text = (
+                f"👤 Profil\n\n"
+                f"🆔 ID: {uid}\n"
+                f"📧 Email: {email} {verified}\n\n"
+                f"💰 Balans: {format_price(balance)} UZS\n"
+                f"🧾 Buyurtmalar: {orders_count}\n"
+                f"⭐ Xarid qilingan yulduzlar: {stars_count}"
+            )
+        else:
+            text = (
+                f"👤 Профиль\n\n"
+                f"🆔 ID: {uid}\n"
+                f"📧 Email: {email} {verified}\n\n"
+                f"💰 Баланс: {format_price(balance)} UZS\n"
+                f"🧾 Заказов: {orders_count}\n"
+                f"⭐ Куплено звезд: {stars_count}"
+            )
+
         await msg.answer(
-            f"👤 Профиль\n\n"
-            f"🆔 ID: {uid}\n"
-            f"📧 Email: {email} {verified}\n\n"
-            f"💰 Баланс: {format_price(balance)} UZS\n"
-            f"🧾 Заказов: {orders_count}\n"
-            f"⭐ Куплено звезд: {stars_count}",
+            text,
             reply_markup=kb
         )
 
     @dp.callback_query(F.data == "connect_email")
     async def connect_email(call: types.CallbackQuery):
         uid = call.from_user.id
+
+        lang_row = safe_execute(
+            "SELECT lang FROM users WHERE user_id=%s",
+            (uid,),
+            fetchone=True
+        )
+
+        lang = lang_row[0] if lang_row else "ru"
 
         user_state[uid] = {
             "step": "email_input"
@@ -74,7 +104,9 @@ def register_profile(dp, safe_execute, get_user_balance, format_price, user_stat
         await call.message.delete()
 
         msg = await call.message.answer(
-            "📧 Введите Email:"
+            "📧 Email kiriting:"
+            if lang == "uz"
+            else "📧 Введите Email:"
         )
 
         user_state[uid]["prompt_msg_id"] = msg.message_id
