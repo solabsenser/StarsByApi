@@ -856,6 +856,8 @@ async def process(msg: types.Message):
 
         if state["step"] == "email_input":
 
+            lang = user_lang_cache.get(uid, "ru")
+
             email = msg.text.strip()
 
             safe_execute(
@@ -882,7 +884,9 @@ async def process(msg: types.Message):
                 pass
 
             await msg.answer(
-                f"✅ Email подключён:\n{email}"
+                f"✅ Email ulandi:\n{email}"
+                if lang == "uz"
+                else f"✅ Email подключён:\n{email}"
             )
 
             user_state.pop(uid, None)
