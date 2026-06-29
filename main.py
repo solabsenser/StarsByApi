@@ -131,9 +131,21 @@ def format_price(n):
 # --- DB ---
 conn = psycopg2.connect(DATABASE_URL, sslmode="require")
 
+
 def reconnect():
     global conn
     conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+
+
+def get_cursor():
+    global conn
+
+    try:
+        return conn.cursor()
+
+    except psycopg2.OperationalError:
+        reconnect()
+        return conn.cursor()
 
 # ---- SAFE EXECUTE ----
 def safe_execute(query, params=None, fetchone=False, fetchall=False):
