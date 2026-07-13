@@ -1,5 +1,5 @@
 aiogram
-psycopg2-binary
+asyncpg
 python-dotenv
 requests
 aiohttp
