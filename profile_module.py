@@ -1,54 +1,54 @@
 from aiogram import types, F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-def register_profile(dp, safe_execute, get_user_balance, format_price, user_state):
+def register_profile(dp, execute, get_user_balance, format_price, user_state):
 
     @dp.message(F.text.in_(["👤 Профиль", "👤 Profil"]))
     async def profile(msg: types.Message):
         uid = msg.from_user.id
 
-        lang_row = safe_execute(
-            "SELECT lang FROM users WHERE user_id=%s",
-            (uid,),
+        lang_row = await execute(
+            "SELECT lang FROM users WHERE user_id=$1",
+            uid,
             fetchone=True
         )
 
-        lang = lang_row[0] if lang_row else "ru"
+        lang = lang_row["lang"] if lang_row else "ru"
 
-        row = safe_execute(
+        row = await execute(
             """
-            SELECT email,email_verified
+            SELECT email, email_verified
             FROM users
-            WHERE user_id=%s
+            WHERE user_id=$1
             """,
-            (uid,),
+            uid,
             fetchone=True
         )
 
         email = "Ulanmagan" if lang == "uz" else "Не подключен"
         verified = "❌"
 
-        if row and row[0]:
-            email = row[0]
-            verified = "✅" if row[1] else "❌"
+        if row and row["email"]:
+            email = row["email"]
+            verified = "✅" if row["email_verified"] else "❌"
 
-        stats = safe_execute(
+        stats = await execute(
             """
             SELECT
-                COUNT(*),
-                COALESCE(SUM(amount),0)
+                COUNT(*) AS orders_count,
+                COALESCE(SUM(amount), 0) AS stars_count
             FROM orders
-            WHERE user_id=%s
+            WHERE user_id=$1
             AND status='success'
             """,
-            (uid,),
+            uid,
             fetchone=True
         )
 
-        orders_count = stats[0] if stats else 0
-        stars_count = stats[1] if stats else 0
+        orders_count = stats["orders_count"] if stats else 0
+        stars_count = stats["stars_count"] if stats else 0
 
-        balance = get_user_balance(uid)
+        balance = await get_user_balance(uid)
 
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -89,13 +89,13 @@ def register_profile(dp, safe_execute, get_user_balance, format_price, user_stat
     async def connect_email(call: types.CallbackQuery):
         uid = call.from_user.id
 
-        lang_row = safe_execute(
-            "SELECT lang FROM users WHERE user_id=%s",
-            (uid,),
+        lang_row = await execute(
+            "SELECT lang FROM users WHERE user_id=$1",
+            uid,
             fetchone=True
         )
 
-        lang = lang_row[0] if lang_row else "ru"
+        lang = lang_row["lang"] if lang_row else "ru"
 
         user_state[uid] = {
             "step": "email_input"
