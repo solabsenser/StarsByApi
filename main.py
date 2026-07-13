@@ -124,6 +124,13 @@ TEXTS = {
     }
 }
 
+from aiogram.types import BotCommand
+
+async def set_commands():
+    await bot.set_my_commands([
+        BotCommand(command="start", description="🔄 Обновить бота"),
+    ])
+    
 def format_price(n):
     return f"{n:,}".replace(",", " ")
 
@@ -696,6 +703,7 @@ async def start_web():
 async def main():
     await init_pool()
     await init_tables()
+    await set_commands()
     asyncio.create_task(start_web())
     await dp.start_polling(bot)
 
