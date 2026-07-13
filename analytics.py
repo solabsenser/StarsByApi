@@ -6,29 +6,33 @@ COST_PRICE = 189
 def format_price(n):
     return f"{n:,}".replace(",", " ")
     
-async def generate_stats(get_cursor, bot, period_days=30):
-    cur = get_cursor()
-
-    cur.execute("""
+async def generate_stats(execute, bot, period_days=30):
+    rows = await execute(
+        """
         SELECT user_id, username, amount, price, status, date
         FROM orders
-    """)
-    rows = cur.fetchall()
-
-    from datetime import datetime, timedelta
+        """,
+        fetchall=True
+    )
 
     now = datetime.now()
     start_date = now - timedelta(days=period_days)
 
     daily_income = {}
-    total_income = 0  # оборот (деньги от клиентов)
-    total_cost = 0    # затраты (твоя закупка)
+    total_income = 0
+    total_cost = 0
     success_orders = 0
     failed_orders = 0
     users = {}
 
     for r in rows:
-        user_id, username, amount, price, status, date_str = r
+        user_id = r["user_id"]
+        username = r["username"]
+        amount = r["amount"]
+        price = r["price"]
+        status = r["status"]
+        date_str = r["date"]
+        
         order_date = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
 
         if order_date < start_date:
@@ -38,25 +42,22 @@ async def generate_stats(get_cursor, bot, period_days=30):
 
         if status == "success":
             total_income += price
-            total_cost += amount * 189
+            total_cost += amount * COST_PRICE
             success_orders += 1
 
             daily_income[day] = daily_income.get(day, 0) + price
 
-            # 👤 сохраняем username
-            users[user_id] = {
-                "spent": users.get(user_id, {}).get("spent", 0) + price
-            }
+            if user_id not in users:
+                users[user_id] = {"spent": 0}
+            users[user_id]["spent"] += price
         else:
             failed_orders += 1
 
     profit = total_income - total_cost
     total_orders = success_orders + failed_orders
 
-    # --- ТОП ---
     top_users = sorted(users.items(), key=lambda x: x[1]["spent"], reverse=True)[:5]
 
-    # --- ASCII ГРАФИК ---
     days = [(now - timedelta(days=i)).strftime("%m-%d") for i in range(period_days-1, -1, -1)]
     values = [daily_income.get((now - timedelta(days=i)).strftime("%Y-%m-%d"), 0)
               for i in range(period_days-1, -1, -1)]
@@ -71,7 +72,6 @@ async def generate_stats(get_cursor, bot, period_days=30):
 
     graph_text = "\n".join(graph_lines[-10:])
 
-    # --- ТЕКСТ ---
     text = (
         f"📊 Статистика за {period_days} дней\n\n"
         f"💰 Оборот: {format_price(total_income)} UZS\n"
