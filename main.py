@@ -19,6 +19,13 @@ from profile_module import register_profile
 from mailer import send_receipt_email
 from broadcast import register_broadcast
 
+# ======== LOGGING ==========
+logging.basicConfig(level=logging.ERROR)
+logging.getLogger("aiogram").setLevel(logging.ERROR)
+logging.getLogger("aiogram.event").setLevel(logging.ERROR)
+logging.getLogger("aiogram.dispatcher").setLevel(logging.ERROR)
+logging.getLogger("aiogram.middlewares").setLevel(logging.ERROR)
+
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
