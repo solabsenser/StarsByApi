@@ -18,7 +18,6 @@ from analytics import generate_stats
 from profile_module import register_profile
 from mailer import send_receipt_email
 from broadcast import register_broadcast
-from check_verifier import UzumCheckVerifier  # ДОБАВЛЕНО
 
 # ======== LOGGING ==========
 logging.basicConfig(level=logging.ERROR)
@@ -35,13 +34,9 @@ ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS").split(",")))
 ADMIN_GROUP_ID = int(os.getenv("ADMIN_GROUP_ID"))
 CARD_NUMBER = os.getenv("CARD_NUMBER")
 PRICE_PER_STAR = int(os.getenv("PRICE_PER_STAR"))
-OCR_API_KEY = os.getenv("OCR_API_KEY")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-
-# Инициализация верификатора чеков
-checker = UzumCheckVerifier(api_key=OCR_API_KEY)
 
 API_URL = "https://smm.myxvest2.ru/api/v2"
 
@@ -395,7 +390,7 @@ async def help_menu(msg: types.Message):
             "❓ Помощь\n\n"
             "⭐ Через этого бота вы можете быстро покупать Telegram Stars.\n\n"
             "💳 Пополните баланс и получите звёзды за несколько секунд.\n\n"
-            "📢 Кanal: @premstars77\n"
+            "📢 Канал: @premstars77\n"
             "👨‍💻 Поддержка: @premstars_support\n\n"
             "💎 Быстро, удобно и безопасно."
         )
@@ -663,7 +658,6 @@ async def process(msg: types.Message):
             asyncio.create_task(expire_payment(deposit_id, uid))
         elif state["step"] == "await_screenshot":
             deposit_id = state["deposit_id"]
-            
             row = await execute(
                 "SELECT status FROM deposits WHERE id=$1",
                 deposit_id,
@@ -671,64 +665,35 @@ async def process(msg: types.Message):
             )
             if not row or row['status'] != "waiting":
                 return
-            
             if not msg.photo:
                 await msg.answer(t(uid, "send_screenshot"))
                 return
-            
             file_id = msg.photo[-1].file_id
-            
+            await execute(
+                "UPDATE deposits SET screenshot=$1, status='pending' WHERE id=$2",
+                file_id, deposit_id
+            )
+            await msg.answer(t(uid, "check_sent"))
             row = await execute(
                 "SELECT amount FROM deposits WHERE id=$1",
                 deposit_id,
                 fetchone=True
             )
-            expected_amount = row['amount']
-            
-            file = await bot.get_file(file_id)
-            image_bytes = await bot.download_file(file.file_path)
-            
-            success, message, amount = await checker.verify(image_bytes, expected_amount)
-            
-            # Очищаем память
-            del image_bytes
-            
-            if success:
-                await update_balance(uid, expected_amount)
-                await execute("UPDATE deposits SET status='success' WHERE id=$1", deposit_id)
-                await msg.answer(f"✅ Автоматически подтверждён!\n{message}")
-                
-                user_display = f"@{msg.from_user.username}" if msg.from_user.username else f"id:{uid}"
-                await bot.send_message(
-                    ADMIN_GROUP_ID,
-                    f"✅ Автоплатёж #{deposit_id}\n"
+            amount = row['amount']
+            user_username = msg.from_user.username
+            user_display = f"@{user_username}" if user_username else f"id:{uid}"
+            await bot.send_photo(
+                ADMIN_GROUP_ID,
+                photo=file_id,
+                caption=(
+                    f"💳 Новый платёж\n"
+                    f"🆔 ID: {deposit_id}\n"
                     f"👤 {user_display}\n"
-                    f"💰 {expected_amount} UZS\n"
-                    f"🤖 Автоматически подтверждён"
-                )
-                user_state.pop(uid, None)
-            else:
-                await msg.answer("⏳ Чек отправлен на проверку")
-                
-                await execute(
-                    "UPDATE deposits SET screenshot=$1, status='pending' WHERE id=$2",
-                    file_id, deposit_id
-                )
-                
-                user_display = f"@{msg.from_user.username}" if msg.from_user.username else f"id:{uid}"
-                await bot.send_photo(
-                    ADMIN_GROUP_ID,
-                    photo=file_id,
-                    caption=(
-                        f"💳 Новый платёж\n"
-                        f"🆔 ID: {deposit_id}\n"
-                        f"👤 {user_display}\n"
-                        f"💰 {expected_amount} UZS\n"
-                        f"⚠️ {message}"
-                    ),
-                    reply_markup=admin_kb(deposit_id)
-                )
-                user_state.pop(uid, None)
+                    f"💰 {amount} UZS"
+                ),
+                reply_markup=admin_kb(deposit_id)
+            )
+            user_state.pop(uid, None)
 
 async def handle(request):
     return web.Response(text="OK")
