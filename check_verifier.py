@@ -8,6 +8,7 @@ import base64
 import re
 import hashlib
 import logging
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ class UzumCheckVerifier:
         """
         self.api_key = api_key
         self.used_hashes = set()
-        self.amount_tolerance = 0.05  # 5% допуск
+        self.amount_tolerance = 0.10  # 10% допуск для надёжности
     
     async def verify(self, image_bytes, expected_amount):
         """
@@ -29,42 +30,62 @@ class UzumCheckVerifier:
         Returns:
             (success: bool, message: str, amount: int or None)
         """
-        # Проверка дубликата
-        img_hash = hashlib.md5(image_bytes).hexdigest()
-        if img_hash in self.used_hashes:
+        # Проверка дубликата с правильной обработкой байтов
+        try:
+            if hasattr(image_bytes, 'getvalue'):
+                img_hash = hashlib.md5(image_bytes.getvalue()).hexdigest()
+            else:
+                img_hash = hashlib.md5(image_bytes).hexdigest()
+        except Exception as e:
+            logger.error(f"Ошибка хеширования: {e}")
+            # Если не можем вычислить хеш, пропускаем проверку дубликата
+            img_hash = None
+        
+        if img_hash and img_hash in self.used_hashes:
             return False, "❌ Этот чек уже был использован", None
         
-        # Отправляем на OCR
-        try:
-            text = await self._ocr_image(image_bytes)
-            if not text:
-                return False, "❌ Не удалось распознать чек. Отправьте чёткое фото.", None
-            
-            logger.debug(f"OCR текст: {text[:200]}...")
-            
-            # Ищем сумму
-            amount = self._extract_amount(text)
-            if not amount:
-                return False, "❌ Не удалось найти сумму на чеке", None
-            
-            # Проверяем совпадение
-            if abs(amount - expected_amount) / expected_amount > self.amount_tolerance:
-                return False, f"❌ Сумма не совпадает: {amount} UZS (ожидалось {expected_amount})", amount
-            
-            # Сохраняем хеш
+        # Отправляем на OCR с повторными попытками
+        text = None
+        for attempt in range(3):
+            try:
+                text = await self._ocr_image(image_bytes)
+                if text:
+                    break
+            except Exception as e:
+                logger.warning(f"OCR попытка {attempt+1} не удалась: {e}")
+                await asyncio.sleep(1)
+        
+        if not text:
+            return False, "❌ Не удалось распознать чек. Отправьте чёткое фото.", None
+        
+        logger.debug(f"OCR текст: {text[:200]}...")
+        
+        # Ищем сумму
+        amount = self._extract_amount(text)
+        if not amount:
+            return False, "❌ Не удалось найти сумму на чеке", None
+        
+        # Проверяем совпадение
+        if abs(amount - expected_amount) / expected_amount > self.amount_tolerance:
+            return False, f"❌ Сумма не совпадает: {amount} UZS (ожидалось {expected_amount})", amount
+        
+        # Сохраняем хеш
+        if img_hash:
             self.used_hashes.add(img_hash)
-            
-            return True, f"✅ Чек подтверждён!\n💰 Сумма: {amount} UZS", amount
-            
-        except requests.exceptions.Timeout:
-            return False, "❌ Таймаут OCR сервиса. Попробуйте ещё раз.", None
-        except Exception as e:
-            logger.error(f"OCR ошибка: {e}")
-            return False, f"❌ Ошибка проверки: {str(e)}", None
+        
+        return True, f"✅ Чек подтверждён!\n💰 Сумма: {amount} UZS", amount
     
     async def _ocr_image(self, image_bytes):
         """Отправляет изображение в OCR.space и возвращает распознанный текст"""
-        b64 = base64.b64encode(image_bytes).decode('utf-8')
+        try:
+            # Конвертируем байты в base64
+            if hasattr(image_bytes, 'getvalue'):
+                b64 = base64.b64encode(image_bytes.getvalue()).decode('utf-8')
+            else:
+                b64 = base64.b64encode(image_bytes).decode('utf-8')
+        except Exception as e:
+            logger.error(f"Ошибка конвертации в base64: {e}")
+            return None
         
         response = requests.post(
             'https://api.ocr.space/parse/image',
