@@ -35,12 +35,13 @@ ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS").split(",")))
 ADMIN_GROUP_ID = int(os.getenv("ADMIN_GROUP_ID"))
 CARD_NUMBER = os.getenv("CARD_NUMBER")
 PRICE_PER_STAR = int(os.getenv("PRICE_PER_STAR"))
+OCR_API_KEY = os.getenv("OCR_API_KEY")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # Инициализация верификатора чеков
-checker = UzumCheckVerifier()  # ДОБАВЛЕНО
+checker = UzumCheckVerifier(api_key=OCR_API_KEY)
 
 API_URL = "https://smm.myxvest2.ru/api/v2"
 
