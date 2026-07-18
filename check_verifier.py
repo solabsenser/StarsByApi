@@ -1,46 +1,128 @@
-import io
+"""
+Модуль проверки чеков Uzum Bank через OCR.space API
+Без установки Pillow, pytesseract и прочих тяжелых библиотек
+"""
+
+import requests
+import base64
 import re
-from PIL import Image, ImageEnhance
-import pytesseract
+import hashlib
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class UzumCheckVerifier:
-    def __init__(self):
+    def __init__(self, api_key='helloworld'):
+        """
+        Args:
+            api_key: ключ OCR.space (helloworld - бесплатный, 500 запросов/месяц)
+        """
+        self.api_key = api_key
         self.used_hashes = set()
+        self.amount_tolerance = 0.05  # 5% допуск
     
     async def verify(self, image_bytes, expected_amount):
-        # Хеш против повторов (простая защита)
-        import hashlib
+        """
+        Проверяет чек и сверяет сумму
+        
+        Returns:
+            (success: bool, message: str, amount: int or None)
+        """
+        # Проверка дубликата
         img_hash = hashlib.md5(image_bytes).hexdigest()
         if img_hash in self.used_hashes:
-            return False, "Чек уже использован", None
+            return False, "❌ Этот чек уже был использован", None
         
-        # OCR
-        img = Image.open(io.BytesIO(image_bytes))
-        enhancer = ImageEnhance.Contrast(img)
-        img = enhancer.enhance(2.0)
+        # Отправляем на OCR
+        try:
+            text = await self._ocr_image(image_bytes)
+            if not text:
+                return False, "❌ Не удалось распознать чек. Отправьте чёткое фото.", None
+            
+            logger.debug(f"OCR текст: {text[:200]}...")
+            
+            # Ищем сумму
+            amount = self._extract_amount(text)
+            if not amount:
+                return False, "❌ Не удалось найти сумму на чеке", None
+            
+            # Проверяем совпадение
+            if abs(amount - expected_amount) / expected_amount > self.amount_tolerance:
+                return False, f"❌ Сумма не совпадает: {amount} UZS (ожидалось {expected_amount})", amount
+            
+            # Сохраняем хеш
+            self.used_hashes.add(img_hash)
+            
+            return True, f"✅ Чек подтверждён!\n💰 Сумма: {amount} UZS", amount
+            
+        except requests.exceptions.Timeout:
+            return False, "❌ Таймаут OCR сервиса. Попробуйте ещё раз.", None
+        except Exception as e:
+            logger.error(f"OCR ошибка: {e}")
+            return False, f"❌ Ошибка проверки: {str(e)}", None
+    
+    async def _ocr_image(self, image_bytes):
+        """Отправляет изображение в OCR.space и возвращает распознанный текст"""
+        b64 = base64.b64encode(image_bytes).decode('utf-8')
         
-        text = pytesseract.image_to_string(img, lang='rus+eng')
+        response = requests.post(
+            'https://api.ocr.space/parse/image',
+            data={
+                'apikey': self.api_key,
+                'base64Image': b64,
+                'language': 'rus',
+                'OCREngine': 2,
+                'scale': True,
+                'isTable': False,
+                'detectOrientation': True,
+                'filetype': 'PNG'
+            },
+            timeout=30
+        )
         
-        # Ищем сумму
+        data = response.json()
+        
+        if data.get('IsErroredOnProcessing'):
+            error_msg = data.get('ErrorMessage', ['Unknown error'])[0]
+            logger.error(f"OCR.space ошибка: {error_msg}")
+            return None
+        
+        if not data.get('ParsedResults'):
+            return None
+        
+        return data['ParsedResults'][0].get('ParsedText', '')
+    
+    def _extract_amount(self, text):
+        """Извлекает сумму из текста чека"""
         patterns = [
+            # Uzum Bank формат
             r'Перевели\s+(\d+[\s.]?\d*)\s*сум',
+            r'Перевели\s+(\d+[\s.]?\d*)\s*UZS',
+            r'Перевели\s+(\d+[\s.]?\d*)',
+            
+            # Общие паттерны
+            r'сумма[:\s]+(\d+[\s.]?\d*)\s*сум',
+            r'итого[:\s]+(\d+[\s.]?\d*)\s*сум',
             r'(\d+[\s.]?\d*)\s*сум',
             r'(\d+[\s.]?\d*)\s*UZS',
         ]
         
-        amount = None
         for pattern in patterns:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
-                amount = int(match.group(1).replace(' ', '').replace('.', ''))
-                break
+                try:
+                    amount_str = match.group(1).replace(' ', '').replace('.', '')
+                    amount = int(amount_str)
+                    if amount >= 1000:  # Пропускаем слишком маленькие суммы
+                        return amount
+                except:
+                    continue
         
-        if not amount:
-            return False, "Не удалось распознать сумму", None
-        
-        # Проверка с допуском 5%
-        if abs(amount - expected_amount) / expected_amount > 0.05:
-            return False, f"Сумма не совпадает: {amount} (ожидалось {expected_amount})", amount
-        
-        self.used_hashes.add(img_hash)
-        return True, f"✅ {amount} UZS", amount
+        return None
+
+
+# Функция для быстрой проверки (для отладки)
+async def quick_verify(image_bytes, expected_amount):
+    verifier = UzumCheckVerifier()
+    return await verifier.verify(image_bytes, expected_amount)
