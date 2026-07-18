@@ -677,7 +677,6 @@ async def process(msg: types.Message):
             
             file_id = msg.photo[-1].file_id
             
-            # Получаем ожидаемую сумму
             row = await execute(
                 "SELECT amount FROM deposits WHERE id=$1",
                 deposit_id,
@@ -685,15 +684,15 @@ async def process(msg: types.Message):
             )
             expected_amount = row['amount']
             
-            # Скачиваем фото
             file = await bot.get_file(file_id)
             image_bytes = await bot.download_file(file.file_path)
             
-            # Автоматическая проверка чека
             success, message, amount = await checker.verify(image_bytes, expected_amount)
             
+            # Очищаем память
+            del image_bytes
+            
             if success:
-                # Автоподтверждение
                 await update_balance(uid, expected_amount)
                 await execute("UPDATE deposits SET status='success' WHERE id=$1", deposit_id)
                 await msg.answer(f"✅ Автоматически подтверждён!\n{message}")
@@ -708,7 +707,6 @@ async def process(msg: types.Message):
                 )
                 user_state.pop(uid, None)
             else:
-                # Ручная проверка
                 await msg.answer("⏳ Чек отправлен на проверку")
                 
                 await execute(
