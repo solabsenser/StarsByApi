@@ -297,7 +297,8 @@ async def instruction(msg: types.Message):
     uid = msg.from_user.id
     lang = user_lang_cache.get(uid, "ru")
     await msg.answer(
-        f"📖 {'Botdan foydalanish bo\'yicha batafsil yo\'riqnoma' if lang == 'uz' else 'Подробная инструкция по использованию бота'}:\n\nhttps://telegra.ph/PremStars---Foydalanish-boyicha-qollanma--Instrukciya-07-19"
+        f"📖 {'Botdan foydalanish bo\'yicha batafsil yo\'riqnoma' if lang == 'uz' else 'Подробная инструкция по использованию бота'}:\n\nhttps://telegra.ph/PremStars---Foydalanish-boyicha-qollanma--Instrukciya-07-19",
+        disable_web_page_preview=True
     )
 
 # ======= CALLBACK =========
