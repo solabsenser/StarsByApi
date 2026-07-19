@@ -296,9 +296,19 @@ async def choose_lang(msg: types.Message):
 async def instruction(msg: types.Message):
     uid = msg.from_user.id
     lang = user_lang_cache.get(uid, "ru")
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="📖 Yo'riqnoma" if lang == "uz" else "📖 Инструкция",
+                url="https://telegra.ph/PremStars---Foydalanish-boyicha-qollanma--Instrukciya-07-19"
+            )
+        ]
+    ])
+    
     await msg.answer(
-        f"📖 {'Botdan foydalanish bo\'yicha batafsil yo\'riqnoma' if lang == 'uz' else 'Подробная инструкция по использованию бота'}:\n\nhttps://telegra.ph/PremStars---Foydalanish-boyicha-qollanma--Instrukciya-07-19",
-        disable_web_page_preview=True
+        f"📖 {'Botdan foydalanish bo\'yicha batafsil yo\'riqnoma' if lang == 'uz' else 'Подробная инструкция по использованию бота'}:",
+        reply_markup=kb
     )
 
 # ======= CALLBACK =========
