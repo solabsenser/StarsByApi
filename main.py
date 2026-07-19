@@ -131,13 +131,15 @@ TEXTS = {
     }
 }
 
+# ======= FAST BUTTON ========
 from aiogram.types import BotCommand
 
 async def set_commands():
     await bot.set_my_commands([
         BotCommand(command="start", description="🔄 Обновить бота"),
     ])
-    
+
+# ======== DATABASE ========
 def format_price(n):
     return f"{n:,}".replace(",", " ")
 
@@ -190,6 +192,7 @@ def t(user_id, key):
     lang = user_lang_cache.get(user_id, "ru")
     return TEXTS[key][lang]
 
+# ======= ANTI SPAM ==========
 def is_spamming(uid):
     now = asyncio.get_event_loop().time()
     last = user_last_action.get(uid)
@@ -216,6 +219,7 @@ user_state = {}
 register_broadcast(dp, bot, ADMIN_IDS, execute)
 register_profile(dp, execute, get_user_balance, format_price, user_state)
 
+# ======== KEYBOARD =========
 def main_kb(uid):
     lang = user_lang_cache.get(uid, "ru")
     return ReplyKeyboardMarkup(
@@ -229,7 +233,7 @@ def main_kb(uid):
                 KeyboardButton(text="👤 Profil" if lang == "uz" else "👤 Профиль")
             ],
             [
-                KeyboardButton(text="❓ Yordam" if lang == "uz" else "❓ Помощь"),
+                KeyboardButton(text="📖 Yo'riqnoma" if lang == "uz" else "📖 Инструкция"),
                 KeyboardButton(text="🌐 Tilni tanlash" if lang == "uz" else "🌐 Выбрать язык")
             ]
         ],
@@ -303,6 +307,7 @@ def lang_kb():
         ]
     ])
 
+# ======== COMMANDS ========
 @dp.message(F.text == "/start")
 async def start(msg: types.Message):
     uid = msg.from_user.id
@@ -373,29 +378,15 @@ async def choose_lang(msg: types.Message):
     user_state.pop(uid, None)
     await msg.answer(t(uid, "choose_lang"), reply_markup=lang_kb())
 
-@dp.message(F.text.in_(["❓ Помощь", "❓ Yordam"]))
-async def help_menu(msg: types.Message):
-    lang = user_lang_cache.get(msg.from_user.id, "ru")
-    if lang == "uz":
-        text = (
-            "❓ Yordam\n\n"
-            "⭐ Ushbu bot orqali Telegram Stars sotib olishingiz mumkin.\n\n"
-            "💳 Balansni to‘ldiring va bir necha soniyada yulduzlarni qabul qiling.\n\n"
-            "📢 Kanal: @premstars77\n"
-            "👨‍💻 Qo‘llab-quvvatlash: @premstars_support\n\n"
-            "💎 Tez, qulay va xavfsiz."
-        )
-    else:
-        text = (
-            "❓ Помощь\n\n"
-            "⭐ Через этого бота вы можете быстро покупать Telegram Stars.\n\n"
-            "💳 Пополните баланс и получите звёзды за несколько секунд.\n\n"
-            "📢 Канал: @premstars77\n"
-            "👨‍💻 Поддержка: @premstars_support\n\n"
-            "💎 Быстро, удобно и безопасно."
-        )
-    await msg.answer(text)
+@dp.message(F.text.in_(["📖 Инструкция", "📖 Yo'riqnoma"]))
+async def instruction(msg: types.Message):
+    uid = msg.from_user.id
+    lang = user_lang_cache.get(uid, "ru")
+    await msg.answer(
+        f"📖 {'Botdan foydalanish bo\'yicha batafsil yo\'riqnoma' if lang == 'uz' else 'Подробная инструкция по использованию бота'}:\n\nhttps://telegra.ph/Instrukciya-po-ispolzovaniyu-bota-01-01"
+    )
 
+# ======= CALLBACK =========
 @dp.callback_query()
 async def callbacks(call: types.CallbackQuery):
     uid = call.from_user.id
@@ -511,7 +502,8 @@ async def callbacks(call: types.CallbackQuery):
             )
             await call.message.edit_caption(text)
             await call.message.reply(text)
-
+            
+# ======== ORDER PROCESS =========
 def generate_order_id():
     return "ST-" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
 
@@ -695,6 +687,7 @@ async def process(msg: types.Message):
             )
             user_state.pop(uid, None)
 
+# ======== BOT RUN SERVICE ==========
 async def handle(request):
     return web.Response(text="OK")
 
