@@ -623,7 +623,7 @@ async def process_order(uid, username, amount, msg):
         f"🆔 {'Buyurtma' if lang=='uz' else 'Заказ'}: #{order_id}\n"
         f"👤 {'Qabul qiluvchi' if lang=='uz' else 'Получатель'}: @{username}\n"
         f"⭐ {'Soni' if lang=='uz' else 'Количество'}: {actual_amount} Stars\n"
-        f"💰 {'To‘lov' if lang=='uz' else 'Оплата'}: {actual_price} UZS\n\n"
+        f"💰 {'To‘lov' if lang=='uz' else 'Оплата'}: {total_price} UZS\n\n"
         f"{'✅ Yulduzlar yuborildi!' if lang=='uz' else '✅ Звезды успешно отправлены!'}\n"
         f"{'💎 Rahmat!' if lang=='uz' else '💎 Спасибо за покупку!'}"
     )
@@ -636,7 +636,7 @@ async def process_order(uid, username, amount, msg):
         f"🧾 Заказ: #{order_id}\n"
         f"👤 Пользователь: {user_display}\n"
         f"⭐ Кол-во: {actual_amount}\n"
-        f"💰 Сумма: {actual_price} UZS"
+        f"💰 Сумма: {total_price} UZS"
     )
 
 async def expire_payment(deposit_id, user_id):
