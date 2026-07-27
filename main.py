@@ -6,6 +6,8 @@ import random
 import string
 from datetime import datetime
 from aiohttp import web
+import json
+import time
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram import BaseMiddleware
@@ -39,7 +41,8 @@ PRICE_PER_STAR = int(os.getenv("PRICE_PER_STAR"))
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-API_URL = "https://smm.myxvest2.ru/api/v2"
+# ПРАВИЛЬНЫЙ URL API
+API_URL = "https://smmupper.uz/api/v2"
 
 user_lang_cache = {}
 user_last_action = {}
@@ -75,12 +78,130 @@ async def update_balance(user_id, amount):
     )
 
 def buy_stars_sync(username, amount):
-    return requests.get(API_URL, params={
-        "action": "buyStars",
-        "api_key": API_KEY,
-        "username": username,
-        "amount": amount
-    }).json()
+    """Функция для покупки Stars через API SmmUpper"""
+    max_retries = 3
+    retry_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(
+                API_URL,
+                params={
+                    "action": "buyStars",
+                    "api_key": API_KEY,
+                    "username": username,
+                    "amount": amount
+                },
+                timeout=30
+            )
+            
+            if response.status_code != 200:
+                logging.error(f"API статус {response.status_code}, попытка {attempt+1}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                return {"success": False, "error": f"HTTP {response.status_code}"}
+            
+            if not response.text or not response.text.strip():
+                logging.error(f"API пустой ответ, попытка {attempt+1}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                return {"success": False, "error": "Empty response"}
+            
+            try:
+                data = response.json()
+            except json.JSONDecodeError as e:
+                logging.error(f"JSON ошибка: {e}, ответ: {response.text[:200]}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                return {"success": False, "error": f"Invalid JSON: {response.text[:100]}"}
+            
+            # Проверяем наличие ошибки в ответе
+            if "error" in data:
+                return {"success": False, "error": data["error"]}
+            
+            # Для buyStars успешный ответ содержит order_id
+            if "order_id" in data:
+                return {
+                    "success": True,
+                    "order_id": data["order_id"],
+                    "username": data.get("username", username),
+                    "stars_amount": data.get("stars_amount", amount),
+                    "price": data.get("price", 0),
+                    "currency": data.get("currency", "UZS"),
+                    "new_balance": data.get("new_balance", 0)
+                }
+            
+            # Если есть поле success
+            if data.get("success") is True:
+                return data
+            
+            # Если нет явного success, но есть данные
+            if data:
+                return {"success": True, "data": data}
+            
+            return {"success": False, "error": "Unknown response format"}
+            
+        except requests.exceptions.Timeout:
+            logging.error(f"API таймаут, попытка {attempt+1}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+                continue
+            return {"success": False, "error": "Request timeout"}
+            
+        except requests.exceptions.ConnectionError:
+            logging.error(f"API ошибка соединения, попытка {attempt+1}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+                continue
+            return {"success": False, "error": "Connection error"}
+            
+        except Exception as e:
+            logging.error(f"API неизвестная ошибка: {e}, попытка {attempt+1}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+                continue
+            return {"success": False, "error": str(e)}
+    
+    return {"success": False, "error": "Max retries exceeded"}
+
+def get_balance_sync():
+    """Получение баланса через API SmmUpper"""
+    try:
+        response = requests.get(
+            API_URL,
+            params={
+                "action": "getBalance",
+                "api_key": API_KEY
+            },
+            timeout=30
+        )
+        
+        if response.status_code != 200:
+            return {"success": False, "error": f"HTTP {response.status_code}"}
+        
+        if not response.text:
+            return {"success": False, "error": "Empty response"}
+        
+        data = response.json()
+        
+        if "error" in data:
+            return {"success": False, "error": data["error"]}
+        
+        if "result" in data and "balance" in data["result"]:
+            return {
+                "success": True,
+                "balance": data["result"]["balance"],
+                "spent": data["result"].get("spent", 0),
+                "currency": data["result"].get("currency", "UZS")
+            }
+        
+        return {"success": False, "error": "Invalid response format"}
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 async def set_user_lang(user_id, lang):
     await execute(
@@ -235,6 +356,19 @@ async def stats_cmd(msg: types.Message):
     if msg.from_user.id not in ADMIN_IDS:
         return
     await msg.answer("📊 Выберите период:", reply_markup=stats_kb)
+
+@dp.message(F.text == "/balance")
+async def api_balance_cmd(msg: types.Message):
+    if msg.from_user.id not in ADMIN_IDS:
+        return
+    result = await asyncio.get_event_loop().run_in_executor(None, get_balance_sync)
+    if result["success"]:
+        await msg.answer(
+            f"💰 Баланс API: {format_price(result['balance'])} {result['currency']}\n"
+            f"📊 Потрачено: {format_price(result['spent'])} {result['currency']}"
+        )
+    else:
+        await msg.answer(f"❌ Ошибка: {result.get('error', 'Unknown')}")
 
 @dp.message(F.text.in_(["💰 Баланс", "💰 Balans"]))
 async def balance(msg: types.Message):
@@ -443,8 +577,17 @@ async def process_order(uid, username, amount, msg):
     try:
         loop = asyncio.get_event_loop()
         res = await loop.run_in_executor(None, buy_stars_sync, username, amount)
-        if not isinstance(res, dict) or not res.get("success"):
-            raise Exception(f"API вернул ошибку: {res}")
+        
+        if not res.get("success", False):
+            error_msg = res.get("error", "Unknown API error")
+            logging.error(f"API вернул ошибку: {error_msg}")
+            await update_balance(uid, total_price)
+            await processing_msg.edit_text(
+                f"{t(uid, 'error_order')}\n"
+                f"{t(uid, 'send_admin')}: @premstars_support"
+            )
+            return
+            
     except Exception as e:
         logging.error(f"API ERROR: {e}")
         await update_balance(uid, total_price)
@@ -453,50 +596,48 @@ async def process_order(uid, username, amount, msg):
             f"{t(uid, 'send_admin')}: @premstars_support"
         )
         return
-    if res["success"]:
-        order_id = generate_order_id()
-        row = await execute(
-            "SELECT email,email_verified FROM users WHERE user_id=$1",
-            uid,
-            fetchone=True
-        )
-        if row and row['email']:
-            try:
-                send_receipt_email(row['email'], order_id, username, amount, total_price)
-            except Exception as e:
-                print("EMAIL ERROR:", e)
-        await execute(
-            "INSERT INTO orders (user_id, username, amount, price, order_id, status, date) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-            uid, username, amount, total_price, order_id, "success", datetime.now().strftime("%Y-%m-%d %H:%M")
-        )
-        await asyncio.sleep(4)
-        lang = user_lang_cache.get(uid, "ru")
-        text = (
-            f"{'🌟 Buyurtma muvaffaqiyatli bajarildi!' if lang=='uz' else '🌟 Заказ успешно выполнен!'}\n\n"
-            f"🆔 {'Buyurtma' if lang=='uz' else 'Заказ'}: #{order_id}\n"
-            f"👤 {'Qabul qiluvchi' if lang=='uz' else 'Получатель'}: @{username}\n"
-            f"⭐ {'Soni' if lang=='uz' else 'Количество'}: {amount} Stars\n"
-            f"💰 {'To‘lov' if lang=='uz' else 'Оплата'}: {total_price} UZS\n\n"
-            f"{'✅ Yulduzlar yuborildi!' if lang=='uz' else '✅ Звезды успешно отправлены!'}\n"
-            f"{'💎 Rahmat!' if lang=='uz' else '💎 Спасибо за покупку!'}"
-        )
-        await processing_msg.edit_text(text)
-        user_username = msg.from_user.username
-        user_display = f"@{user_username}" if user_username else f"id:{uid}"
-        await bot.send_message(
-            ADMIN_GROUP_ID,
-            f"⭐ Приобретение звёзд!\n\n"
-            f"🧾 Заказ: #{order_id}\n"
-            f"👤 Пользователь: {user_display}\n"
-            f"⭐ Кол-во: {amount}\n"
-            f"💰 Сумма: {total_price} UZS"
-        )
-    else:
-        await update_balance(uid, total_price)
-        await processing_msg.edit_text(
-            f"{t(uid, 'error_order')}\n"
-            f"{t(uid, 'send_admin')}: @your_admin_username"
-        )
+        
+    # Успешный заказ
+    order_id = res.get("order_id", generate_order_id())
+    actual_amount = res.get("stars_amount", amount)
+    actual_price = res.get("price", total_price)
+    
+    row = await execute(
+        "SELECT email,email_verified FROM users WHERE user_id=$1",
+        uid,
+        fetchone=True
+    )
+    if row and row['email']:
+        try:
+            send_receipt_email(row['email'], order_id, username, actual_amount, actual_price)
+        except Exception as e:
+            print("EMAIL ERROR:", e)
+    await execute(
+        "INSERT INTO orders (user_id, username, amount, price, order_id, status, date) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+        uid, username, actual_amount, actual_price, order_id, "success", datetime.now().strftime("%Y-%m-%d %H:%M")
+    )
+    await asyncio.sleep(4)
+    lang = user_lang_cache.get(uid, "ru")
+    text = (
+        f"{'🌟 Buyurtma muvaffaqiyatli bajarildi!' if lang=='uz' else '🌟 Заказ успешно выполнен!'}\n\n"
+        f"🆔 {'Buyurtma' if lang=='uz' else 'Заказ'}: #{order_id}\n"
+        f"👤 {'Qabul qiluvchi' if lang=='uz' else 'Получатель'}: @{username}\n"
+        f"⭐ {'Soni' if lang=='uz' else 'Количество'}: {actual_amount} Stars\n"
+        f"💰 {'To‘lov' if lang=='uz' else 'Оплата'}: {actual_price} UZS\n\n"
+        f"{'✅ Yulduzlar yuborildi!' if lang=='uz' else '✅ Звезды успешно отправлены!'}\n"
+        f"{'💎 Rahmat!' if lang=='uz' else '💎 Спасибо за покупку!'}"
+    )
+    await processing_msg.edit_text(text)
+    user_username = msg.from_user.username
+    user_display = f"@{user_username}" if user_username else f"id:{uid}"
+    await bot.send_message(
+        ADMIN_GROUP_ID,
+        f"⭐ Приобретение звёзд!\n\n"
+        f"🧾 Заказ: #{order_id}\n"
+        f"👤 Пользователь: {user_display}\n"
+        f"⭐ Кол-во: {actual_amount}\n"
+        f"💰 Сумма: {actual_price} UZS"
+    )
 
 async def expire_payment(deposit_id, user_id):
     await asyncio.sleep(600)
