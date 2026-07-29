@@ -357,6 +357,22 @@ async def stats_cmd(msg: types.Message):
         return
     await msg.answer("📊 Выберите период:", reply_markup=stats_kb)
 
+@dp.message(F.text == "/apibalance")
+async def api_balance(msg: types.Message):
+    if msg.from_user.id not in ADMIN_IDS:
+        return
+    try:
+        response = requests.get(
+            API_URL,
+            params={"action": "getBalance", "api_key": API_KEY},
+            timeout=10
+        )
+        data = response.json()
+        balance = data.get("result", {}).get("balance", 0)
+        await msg.answer(f"💰 Баланс API SmmUpper: {balance} UZS")
+    except Exception as e:
+        await msg.answer(f"❌ {e}")
+        
 @dp.message(F.text == "/balance")
 async def api_balance_cmd(msg: types.Message):
     if msg.from_user.id not in ADMIN_IDS:
