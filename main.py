@@ -68,13 +68,18 @@ async def get_user_balance(user_id):
     )
     if row:
         return row['balance']
-    await execute("INSERT INTO users (user_id, balance) VALUES ($1, 0)", user_id)
+    await execute(
+        "INSERT INTO users (user_id, balance) VALUES ($1, 0) "
+        "ON CONFLICT (user_id) DO NOTHING",
+        user_id
+    )
     return 0
 
 async def update_balance(user_id, amount):
     await execute(
-        "UPDATE users SET balance = balance + $1 WHERE user_id=$2",
-        amount, user_id
+        "INSERT INTO users (user_id, balance) VALUES ($1, $2) "
+        "ON CONFLICT (user_id) DO UPDATE SET balance = users.balance + EXCLUDED.balance",
+        user_id, amount
     )
 
 def buy_stars_sync(username, amount):
@@ -520,7 +525,12 @@ async def callbacks(call: types.CallbackQuery):
     if call.data.startswith("approve_"):
         deposit_id = int(call.data.split("_")[1])
         row = await execute(
-            "SELECT user_id, amount FROM deposits WHERE id=$1",
+            """
+            UPDATE deposits
+            SET status='success'
+            WHERE id=$1 AND status IN ('waiting', 'pending')
+            RETURNING user_id, amount
+            """,
             deposit_id,
             fetchone=True
         )
@@ -528,7 +538,6 @@ async def callbacks(call: types.CallbackQuery):
             user_id = row['user_id']
             amount = row['amount']
             await update_balance(user_id, amount)
-            await execute("UPDATE deposits SET status='success' WHERE id=$1", deposit_id)
             user = await bot.get_chat(user_id)
             user_display = f"@{user.username}" if user.username else f"id:{user_id}"
             text = (
@@ -551,14 +560,18 @@ async def callbacks(call: types.CallbackQuery):
     if call.data.startswith("cancel_"):
         deposit_id = int(call.data.split("_")[1])
         row = await execute(
-            "SELECT user_id, amount FROM deposits WHERE id=$1",
+            """
+            UPDATE deposits
+            SET status='canceled'
+            WHERE id=$1 AND status IN ('waiting', 'pending')
+            RETURNING user_id, amount
+            """,
             deposit_id,
             fetchone=True
         )
         if row:
             user_id = row['user_id']
             amount = row['amount']
-            await execute("UPDATE deposits SET status='canceled' WHERE id=$1", deposit_id)
             user = await bot.get_chat(user_id)
             user_display = f"@{user.username}" if user.username else f"id:{user_id}"
             text = (
